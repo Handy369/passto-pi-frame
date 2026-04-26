@@ -1,0 +1,16 @@
+{
+  "subagent": {
+    "defaults": {
+      "completionPolicy": "process-exit",
+      "idleTimeoutMs": 15000,
+      "terminateGraceMs": 5000
+    },
+    "contracts": {
+      "ralph-loop": {
+        "completionPolicy": "process-exit",
+        "idleTimeoutMs": 60000,
+        "terminateGraceMs": 10000
+      }
+    }
+  }
+}
