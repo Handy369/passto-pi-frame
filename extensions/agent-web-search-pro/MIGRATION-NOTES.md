@@ -15,6 +15,7 @@
 
 如确需本地文件配置，可复制：
 - `config.example.json` -> `config.json`
+- 或 `config.local.template.json` -> `config.json`
 
 并确保 `config.json` 不提交到 git。
 
