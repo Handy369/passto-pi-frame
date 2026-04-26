@@ -5,6 +5,7 @@ node_modules/
 
 # runtime state
 **/.state.json
+extensions/models.dev-api.json
 
 # local scratch
 .tmp/

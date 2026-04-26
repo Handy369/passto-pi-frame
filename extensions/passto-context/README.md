@@ -36,26 +36,36 @@
 
 ## 安装
 
-这是 **目录风格** 扩展。Pi 会自动发现 `~/.pi/agent/extensions/<名称>/index.ts`。
+这是 **目录风格** 扩展。
 
-### 方式一：复制（推荐）
+当前仓库推荐使用 **外部资源仓 + settings 挂载** 模式，而不是继续把源码直接复制进 `~/.pi/agent/extensions/`。
 
-```bash
-# 复制扩展目录到 Pi 扩展文件夹
-cp -r "/Users/handy/Library/Mobile Documents/com~apple~CloudDocs/Handy-AI/PasstoContext/code/passto-context" \
-      ~/.pi/agent/extensions/
+推荐做法：
+- 将扩展保存在资源仓（例如 `~/dev/pi/extensions/passto-context`）
+- 在 `~/.pi/agent/settings.json` 中通过 `extensions` 数组挂载资源仓
+- 由 `~/.pi` 仅承担 runtime home 职责
+
+### 方式一：资源仓挂载（推荐）
+
+```json
+{
+  "extensions": [
+    "/Users/handy/dev/pi/extensions"
+  ]
+}
+```
+
+然后在 Pi 中执行：
+
+```text
+/reload
 ```
 
 ### 方式二：项目本地（项目级配置）
 
-```bash
-# 针对特定项目
-mkdir -p .pi/extensions
-cp -r "/Users/handy/Library/Mobile Documents/com~apple~CloudDocs/Handy-AI/PasstoContext/code/passto-context" \
-      .pi/extensions/
-```
+如果你希望仅对特定项目生效，可在项目内使用 `.pi/settings.json` 指向本地资源目录。
 
-### 方式三：符号链接（开发时使用）
+### 方式三：符号链接（兼容旧工作流，不再推荐作为主方案）
 
 ```bash
 # 链接到源码目录，修改源码后立即生效
@@ -76,13 +86,13 @@ ln -sf "$SRC/package.json"     ./package.json
 
 ### 验证安装
 
-运行 Pi：
+运行 Pi 并执行：
 
-```bash
-pi
+```text
+/reload
 ```
 
-你应该看到：`[PasstoContext] PasstoContext ready`（或界面上的通知）
+你应该看到：`[PasstoContext] PasstoContext ready`（或界面上的通知），且无资源加载报错。
 
 ## 命令
 
