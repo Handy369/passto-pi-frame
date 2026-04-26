@@ -67,6 +67,8 @@
 
 ### 方式三：符号链接（兼容旧工作流，不再推荐作为主方案）
 
+仅在你明确需要兼容旧式 `~/.pi/agent/extensions/` 开发方式时使用。对于当前仓库，优先采用资源仓 + settings 挂载方案。
+
 ```bash
 # 链接到源码目录，修改源码后立即生效
 mkdir -p ~/.pi/agent/extensions/passto-context
@@ -283,7 +285,7 @@ LLM 看到相关历史而不增加 Token 负担
 
 ### "PasstoContext not initialized"
 
-确认扩展已正确放置在 `~/.pi/agent/extensions/passto-context/index.ts`（注意是 `passto-context/index.ts`，不是 `passto-context.ts`）。
+如果你仍在使用旧式目录安装，请确认扩展位于 `~/.pi/agent/extensions/passto-context/index.ts`（注意是 `passto-context/index.ts`，不是 `passto-context.ts`）。在当前资源仓方案下，应优先确认 `~/.pi/agent/settings.json` 已指向 `/Users/handy/dev/pi/extensions`，并通过 `/reload` 验证加载。
 
 ### 压缩使用了默认方式而非智能摘要
 

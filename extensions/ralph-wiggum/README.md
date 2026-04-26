@@ -20,7 +20,9 @@ pi install npm:@tmustier/pi-ralph-wiggum
 pi install git:github.com/tmustier/pi-extensions
 ```
 
-Then filter to just this extension in `~/.pi/agent/settings.json`:
+Then filter to just this extension in your Pi settings.
+
+For package installs, you can configure `~/.pi/agent/settings.json` like this:
 
 ```json
 {
@@ -31,6 +33,15 @@ Then filter to just this extension in `~/.pi/agent/settings.json`:
       "skills": ["ralph-wiggum/SKILL.md"]
     }
   ]
+}
+```
+
+For this local resource-repo workflow, the recommended pattern is to keep the extension in a repo such as `~/dev/pi/extensions/ralph-wiggum` and load it via:
+
+```json
+{
+  "extensions": ["/Users/handy/dev/pi/extensions"],
+  "themes": ["/Users/handy/dev/pi/themes"]
 }
 ```
 

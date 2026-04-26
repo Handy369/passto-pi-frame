@@ -7,7 +7,7 @@
  * - Context Tracking: Real-time session state monitoring
  *
  * Usage:
- *   Place in ~/.pi/agent/extensions/passto-context/index.ts
+ *   Legacy install path: ~/.pi/agent/extensions/passto-context/index.ts
  *   Pi auto-discovers and loads it.
  */
 
