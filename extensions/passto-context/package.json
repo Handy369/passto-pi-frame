@@ -1,0 +1,20 @@
+{
+  "name": "passto-context",
+  "version": "0.1.0",
+  "description": "Smart context management extension for Pi CLI — intelligent compaction, memory injection, and session tracking",
+  "pi": {
+    "extensions": ["./index.ts"]
+  },
+  "keywords": [
+    "pi",
+    "extension",
+    "context",
+    "memory",
+    "compaction",
+    "session"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {}
+}
