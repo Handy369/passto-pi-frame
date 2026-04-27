@@ -6,8 +6,8 @@ import {
   type SubagentRunResult,
   type SubagentUsage,
 } from "../../lib/passto-agent-runtime/index.ts";
-import { getContractLifecycleConfig } from "../../lib/passto-agent-runtime/config.ts";
 import { renderCall, renderResult } from "./render.js";
+import { resolveLifecycleOverrides } from "./lifecycle-overrides.js";
 import { getToolResultSummariesFromRawEvents } from "./display-items.js";
 import { buildProgressUpdateText } from "./render-helpers.js";
 import { formatRuntimeProfilesForPrompt, listRuntimeProfileSummaries } from "./runtime-profiles.js";
@@ -32,25 +32,6 @@ const SUBAGENT_DEPTH_ENV = "PI_SUBAGENT_DEPTH";
 const SUBAGENT_MAX_DEPTH_ENV = "PI_SUBAGENT_MAX_DEPTH";
 const SUBAGENT_STACK_ENV = "PI_SUBAGENT_STACK";
 const SUBAGENT_PREVENT_CYCLES_ENV = "PI_SUBAGENT_PREVENT_CYCLES";
-
-function resolveLifecycleOverrides(
-  executionContract: string | undefined,
-  overrides: {
-    completionPolicy?: string;
-    idleTimeoutMs?: number;
-    terminateGraceMs?: number;
-  },
-) {
-  const runtimeDefaults = getContractLifecycleConfig(executionContract);
-  return {
-    completionPolicy:
-      overrides.completionPolicy === "agent-end" || overrides.completionPolicy === "process-exit"
-        ? overrides.completionPolicy
-        : runtimeDefaults.completionPolicy,
-    idleTimeoutMs: overrides.idleTimeoutMs ?? runtimeDefaults.idleTimeoutMs,
-    terminateGraceMs: overrides.terminateGraceMs ?? runtimeDefaults.terminateGraceMs,
-  };
-}
 
 const TaskItem = Type.Object({
   agent: Type.String({

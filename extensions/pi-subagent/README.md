@@ -108,7 +108,7 @@ Example:
 
 ### Execution contract
 
-`subagent` also supports an optional `executionContract` field. The first planned contract is:
+`subagent` also supports an optional `executionContract` field. Currently supported:
 
 - `ralph-loop`
 
@@ -205,7 +205,7 @@ Profile frontmatter can also define lifecycle defaults such as:
 - `terminateGraceMs`
 
 In addition, lifecycle defaults are configured in:
-- `agent/lib/passto-agent-runtime/config.json`
+- `lib/passto-agent-runtime/config.json`
 
 This includes:
 - `subagent.defaults` for general runtime lifecycle defaults
@@ -279,15 +279,16 @@ User: Task: Audit these files
 
 ## What Comes Back to the Main Agent
 
-| Data                        | Main Agent Sees          | TUI Shows              |
-| --------------------------- | ------------------------ | ---------------------- |
-| Final text output           | ✅ Yes — full, unbounded | ✅ Yes                 |
-| Tool calls made by subagent | ❌ No                    | ✅ Yes (expanded view) |
-| Token usage / cost          | ❌ No                    | ✅ Yes                 |
-| Reasoning/thinking steps    | ❌ No                    | ❌ No                  |
-| Error messages              | ✅ Yes (on failure)      | ✅ Yes                 |
+| Data                              | Main Agent Sees                         | TUI Shows              |
+| --------------------------------- | --------------------------------------- | ---------------------- |
+| Summary text in tool result       | ✅ Yes                                  | ✅ Yes                 |
+| Structured execution details      | ✅ Via tool `details` for rendering     | ✅ Yes                 |
+| Tool calls made by subagent       | ❌ Not as direct parent tool invocations | ✅ Yes (expanded view) |
+| Token usage / cost                | ❌ Not in top-level text output         | ✅ Yes                 |
+| Reasoning/thinking steps          | ❌ No                                   | ❌ No                  |
+| Error messages                    | ✅ Yes (on failure)                     | ✅ Yes                 |
 
-The main agent receives only the final assistant text from each subagent, while the TUI can still show richer execution details.
+The main agent receives summary text in the tool result content, while richer structured execution details are attached in `details` for TUI rendering.
 
 ## Parallel Mode Behavior
 
@@ -319,7 +320,7 @@ Currently supported:
 When `executionContract: "ralph-loop"` is provided, `pi-subagent` verifies child raw events and `.ralph` artifacts to distinguish a real Ralph-driven loop from a prompt-level imitation.
 
 `ralph-loop`-specific lifecycle defaults should be configured in:
-- `agent/lib/passto-agent-runtime/config.json`
+- `lib/passto-agent-runtime/config.json`
 - path: `subagent.contracts["ralph-loop"]`
 
 This is the preferred place to tune:
@@ -350,9 +351,16 @@ Typical checks include:
 ## Project Structure
 
 ```txt
-index.ts     — Extension entry point: tool registration and orchestration
-render.ts    — TUI rendering for tool calls/results
-types.ts     — Shared result/render helpers
+index.ts                — Extension entry point and orchestration
+render.ts               — TUI rendering
+render-helpers.ts       — Progress and activity formatting helpers
+display-items.ts        — Convert messages/raw events into renderable display items
+types.ts                — Shared result/render helpers
+contracts.ts            — Execution contract parsing
+ralph-verification.ts   — Ralph loop contract verification
+runtime-profiles.ts     — Runtime profile discovery and prompt formatting
+lifecycle-overrides.ts  — Contract-aware lifecycle override resolution
+test/runtime-native.test.mjs — Runtime and lifecycle regression tests
 ```
 
 ## Attribution

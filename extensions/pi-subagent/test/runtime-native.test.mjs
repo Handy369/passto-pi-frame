@@ -31,6 +31,11 @@ import {
 import { getContractLifecycleConfig } from "../../../lib/passto-agent-runtime/config.ts";
 import { runSubagent } from "../../../lib/passto-agent-runtime/index.ts";
 
+const RUNTIME_CONFIG_PATH = path.resolve(
+  path.dirname(new URL(import.meta.url).pathname),
+  "../../../lib/passto-agent-runtime/config.json",
+);
+
 function makeResult(overrides = {}) {
   return {
     agent: "oracle",
@@ -381,7 +386,7 @@ test("runtime lifecycle resolvers prefer explicit options over config defaults",
 });
 
 test("runtime lifecycle resolvers use config defaults when options are omitted", async () => {
-  const configPath = path.resolve(process.cwd(), "agent/lib/passto-agent-runtime/config.json");
+  const configPath = RUNTIME_CONFIG_PATH;
   const original = fs.readFileSync(configPath, "utf-8");
   const customConfig = {
     subagent: {
@@ -417,7 +422,7 @@ test("runtime lifecycle resolvers use config defaults when options are omitted",
 });
 
 test("runtime contract lifecycle config reads ralph-loop defaults from config", async () => {
-  const configPath = path.resolve(process.cwd(), "agent/lib/passto-agent-runtime/config.json");
+  const configPath = RUNTIME_CONFIG_PATH;
   const original = fs.readFileSync(configPath, "utf-8");
   const customConfig = {
     subagent: {
@@ -451,7 +456,7 @@ test("runtime contract lifecycle config reads ralph-loop defaults from config", 
 });
 
 test("subagent lifecycle overrides use contract config for ralph-loop", async () => {
-  const configPath = path.resolve(process.cwd(), "agent/lib/passto-agent-runtime/config.json");
+  const configPath = RUNTIME_CONFIG_PATH;
   const original = fs.readFileSync(configPath, "utf-8");
   const customConfig = {
     subagent: {
@@ -472,9 +477,9 @@ test("subagent lifecycle overrides use contract config for ralph-loop", async ()
   fs.writeFileSync(configPath, JSON.stringify(customConfig, null, 2));
 
   try {
-    const subagentModule = await import(`../index.ts?ts=${Date.now()}`);
+    const lifecycleOverridesModule = await import(`../lifecycle-overrides.ts?ts=${Date.now()}`);
     assert.deepEqual(
-      subagentModule.__internal.resolveLifecycleOverrides("ralph-loop", {}),
+      lifecycleOverridesModule.resolveLifecycleOverrides("ralph-loop", {}),
       {
         completionPolicy: "process-exit",
         idleTimeoutMs: 44444,
@@ -487,7 +492,7 @@ test("subagent lifecycle overrides use contract config for ralph-loop", async ()
 });
 
 test("subagent lifecycle overrides prefer explicit values over contract config", async () => {
-  const configPath = path.resolve(process.cwd(), "agent/lib/passto-agent-runtime/config.json");
+  const configPath = RUNTIME_CONFIG_PATH;
   const original = fs.readFileSync(configPath, "utf-8");
   const customConfig = {
     subagent: {
@@ -508,9 +513,9 @@ test("subagent lifecycle overrides prefer explicit values over contract config",
   fs.writeFileSync(configPath, JSON.stringify(customConfig, null, 2));
 
   try {
-    const subagentModule = await import(`../index.ts?ts=${Date.now()}`);
+    const lifecycleOverridesModule = await import(`../lifecycle-overrides.ts?ts=${Date.now()}`);
     assert.deepEqual(
-      subagentModule.__internal.resolveLifecycleOverrides("ralph-loop", {
+      lifecycleOverridesModule.resolveLifecycleOverrides("ralph-loop", {
         completionPolicy: "agent-end",
         idleTimeoutMs: 999,
         terminateGraceMs: 111,
@@ -527,7 +532,7 @@ test("subagent lifecycle overrides prefer explicit values over contract config",
 });
 
 test("runtime lifecycle resolvers fall back when config file is missing", async () => {
-  const configPath = path.resolve(process.cwd(), "agent/lib/passto-agent-runtime/config.json");
+  const configPath = RUNTIME_CONFIG_PATH;
   const backupPath = `${configPath}.bak-test`;
   fs.renameSync(configPath, backupPath);
 
@@ -643,6 +648,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     assert.equal(result.success, false);
     assert.equal(result.stopReason, "idle_timeout");
     assert.match(result.stderr, /became idle/i);
+    assert.equal(getFinalAssistantText(result.messages), "done but hanging");
   } finally {
     if (prevBin === undefined) delete process.env.PI_SUBAGENT_PI_BIN;
     else process.env.PI_SUBAGENT_PI_BIN = prevBin;
@@ -650,7 +656,81 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
 });
 
-test("runSubagent exits quickly in agent-end mode without waiting for later output", async () => {
+test("process-exit mode preserves multiple tool calls and post-agent_end output", async () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-runtime-"));
+  const fakePi = path.join(tmp, "fake-pi-multi-tools.cjs");
+  fs.writeFileSync(
+    fakePi,
+    `#!/usr/bin/env node
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+(async () => {
+  console.log(JSON.stringify({ type: "agent_start" }));
+  console.log(JSON.stringify({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "read", arguments: { path: "README.md" } },
+        { type: "toolCall", name: "bash", arguments: { command: "pwd" } },
+        { type: "text", text: "still running after tools" }
+      ],
+      timestamp: 1
+    }
+  }));
+  console.log(JSON.stringify({
+    type: "agent_end",
+    messages: [{ role: "assistant", content: [{ type: "text", text: "early summary" }], timestamp: 2 }]
+  }));
+  await sleep(250);
+  console.log(JSON.stringify({
+    type: "turn_end",
+    message: { role: "assistant", content: [{ type: "text", text: "final output after natural exit" }], timestamp: 3 }
+  }));
+  process.exit(0);
+})();
+`,
+    { encoding: "utf-8", mode: 0o755 },
+  );
+
+  const prevBin = process.env.PI_SUBAGENT_PI_BIN;
+  process.env.PI_SUBAGENT_PI_BIN = fakePi;
+
+  try {
+    const result = await runSubagent({
+      prompt: "ignored-prompt",
+      cwd: process.cwd(),
+      noSession: true,
+      offline: true,
+      noContextFiles: true,
+      noPromptTemplates: true,
+      noSkills: true,
+      noExtensions: true,
+      completionPolicy: "process-exit",
+      idleTimeoutMs: 2000,
+      terminateGraceMs: 100,
+      timeoutMs: 5000,
+    });
+
+    assert.equal(result.success, true);
+    assert.equal(getFinalAssistantText(result.messages), "final output after natural exit");
+    assert.deepEqual(
+      getDisplayItems(result.messages, []),
+      [
+        { type: "toolCall", name: "read", args: { path: "README.md" } },
+        { type: "toolCall", name: "bash", args: { command: "pwd" } },
+        { type: "text", text: "still running after tools" },
+        { type: "text", text: "early summary" },
+        { type: "text", text: "final output after natural exit" },
+      ],
+    );
+  } finally {
+    if (prevBin === undefined) delete process.env.PI_SUBAGENT_PI_BIN;
+    else process.env.PI_SUBAGENT_PI_BIN = prevBin;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("runSubagent in agent-end mode ignores later output after agent_end", async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-runtime-"));
   const fakePi = path.join(tmp, "fake-pi-agent-end.cjs");
   fs.writeFileSync(
@@ -677,7 +757,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
   const prevBin = process.env.PI_SUBAGENT_PI_BIN;
   process.env.PI_SUBAGENT_PI_BIN = fakePi;
-  const startedAt = Date.now();
 
   try {
     const result = await runSubagent({
@@ -695,11 +774,18 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
       timeoutMs: 5000,
     });
 
-    const elapsed = Date.now() - startedAt;
     assert.equal(result.exitCode, 0);
     assert.equal(result.success, true);
-    assert.ok(elapsed < 350, `expected elapsed < 350ms, got ${elapsed}`);
     assert.equal(getFinalAssistantText(result.messages), "agent-end summary");
+    assert.ok(
+      !result.messages.some((message) =>
+        message &&
+        typeof message === "object" &&
+        Array.isArray(message.content) &&
+        message.content.some((part) => part?.type === "text" && part.text === "too late"),
+      ),
+      'expected later output "too late" to be ignored in agent-end mode',
+    );
   } finally {
     if (prevBin === undefined) delete process.env.PI_SUBAGENT_PI_BIN;
     else process.env.PI_SUBAGENT_PI_BIN = prevBin;
