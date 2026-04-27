@@ -1,8 +1,16 @@
 {
   "name": "passto-pi-frame",
   "private": true,
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.49",
+    "typebox": "^1.1.33"
+  },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   }
 }
