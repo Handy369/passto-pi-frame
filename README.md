@@ -4,7 +4,6 @@
 
 本仓库管理：
 - `extensions/`：Pi 可直接加载的扩展
-- `themes/`：主题资源
 - `docs/`：设计、迁移与维护文档
 - `lib/passto-agent-runtime/`：供 `pi-subagent`、`extension-maker` 等复用的共享 runtime 组件
 

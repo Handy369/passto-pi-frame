@@ -5,7 +5,6 @@
 
 ## 已完成
 - 第一批扩展迁移并验证加载
-- 主题迁移并验证加载
 - docs 收拢
 - `agent-web-search-pro` 核心源码迁入并验证 `/reload`
 - `pi-subagent` 通过引入 `lib/passto-agent-runtime` 恢复成功
@@ -16,7 +15,6 @@
 - 仓库：`/Users/handy/dev/pi`
 - settings 默认挂载：
   - `/Users/handy/dev/pi/extensions`
-  - `/Users/handy/dev/pi/themes`
 
 ## 当前 feature 工作流
 - 从 `main` 创建 worktree

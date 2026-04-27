@@ -40,8 +40,7 @@ For this local resource-repo workflow, the recommended pattern is to keep the ex
 
 ```json
 {
-  "extensions": ["/Users/handy/dev/pi/extensions"],
-  "themes": ["/Users/handy/dev/pi/themes"]
+  "extensions": ["/Users/handy/dev/pi/extensions"]
 }
 ```
 

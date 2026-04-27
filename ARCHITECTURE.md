@@ -1,7 +1,7 @@
 # ARCHITECTURE
 
 本仓库是当前 Pi 自定义能力的主开发仓，职责已经不再只是“静态资源仓”，而是：
-- 管理可加载的 Pi extensions / skills / themes / docs
+- 管理可加载的 Pi extensions / skills / docs
 - 管理部分与扩展强耦合的共享运行层（当前为 `lib/passto-agent-runtime`）
 - 作为 stable main + feature worktree 的真实开发基础
 
@@ -16,9 +16,6 @@
 - 第一批低风险扩展
 - 第二批已迁入的 `agent-web-search-pro`
 - 已恢复的 `pi-subagent`
-
-### `themes/`
-存放 Pi 主题资源。
 
 ### `docs/`
 存放迁移前后保留的设计文档、历史分析文档与参考材料。
@@ -61,8 +58,7 @@
 
 ```json
 {
-  "extensions": ["/Users/handy/dev/pi/extensions"],
-  "themes": ["/Users/handy/dev/pi/themes"]
+  "extensions": ["/Users/handy/dev/pi/extensions"]
 }
 ```
 
@@ -70,8 +66,7 @@
 
 ```json
 {
-  "extensions": ["/Users/handy/worktree/pi-sandbox/extensions"],
-  "themes": ["/Users/handy/worktree/pi-sandbox/themes"]
+  "extensions": ["/Users/handy/worktree/pi-sandbox/extensions"]
 }
 ```
 
@@ -83,7 +78,6 @@
 适合继续纳入 git：
 - 扩展源码
 - skills / SKILL.md / references
-- theme 文件
 - 共享 runtime 代码（当前 `lib/passto-agent-runtime`）
 - 与代码强关联的默认配置（例如 runtime contract defaults）
 
