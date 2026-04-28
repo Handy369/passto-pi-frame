@@ -1,0 +1,69 @@
+import { executeInvocation, type ExecutorInvocation, type ExecutorRunResult } from "../../passto-executor/index.ts";
+import type { NormalizedBuilderInput } from "../builder/input.ts";
+
+export type BuilderExecutorBridgeRequest = {
+  invocation: ExecutorInvocation;
+  runId: string;
+  agent: string;
+  metadata: {
+    executorType: "passto-builder";
+    projectName: string;
+    cwd: string;
+    executionEngine: "ralph-loop";
+  };
+};
+
+export function buildExecutorBridgeRequest(input: NormalizedBuilderInput): BuilderExecutorBridgeRequest {
+  const runId = `builder-${Date.now()}`;
+  return {
+    runId,
+    agent: "default",
+    metadata: {
+      executorType: "passto-builder",
+      projectName: "passto-ai-frame",
+      cwd: input.cwd,
+      executionEngine: input.executionEngine,
+    },
+    invocation: {
+      sourceTaskDocPath: `builder:${runId}`,
+      caller: {
+        type: "workflow-backed-executor",
+        name: "passto-builder",
+      },
+      project: {
+        name: "passto-ai-frame",
+        cwd: input.cwd,
+      },
+      stage: "builder",
+      executorType: "passto-builder",
+      task: {
+        title: input.goal,
+        description: input.task,
+      },
+      expectedOutput: {
+        todolist: input.expectedOutputs,
+        checklist: input.checklist.map((item) => item.text),
+      },
+      constraints: input.constraints ?? [],
+      inputs: [],
+      hints: {
+        preferredRole: "builder",
+      },
+      mode: "single",
+    },
+  };
+}
+
+export type BuilderExecutorInvoker = typeof executeInvocation;
+
+export async function executeBuilderThroughPasstoExecutor(
+  input: NormalizedBuilderInput,
+  invoker: BuilderExecutorInvoker = executeInvocation,
+): Promise<ExecutorRunResult> {
+  const request = buildExecutorBridgeRequest(input);
+  return invoker(request.invocation, {
+    runId: request.runId,
+    agent: request.agent,
+    contract: request.metadata.executionEngine,
+  });
+}
