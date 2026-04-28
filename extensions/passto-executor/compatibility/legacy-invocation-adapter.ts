@@ -139,6 +139,7 @@ export function callerRequestToRuntimePolicy(request: ExecutorCallerRequest): Pa
     mode: request.mode,
     maxConcurrency: request.maxConcurrency,
     idleTimeoutMs: request.idleTimeoutMs,
+    timeoutMs: request.timeoutMs,
     terminateGraceMs: request.terminateGraceMs,
     completionPolicy: "process-exit",
   };

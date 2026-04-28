@@ -69,6 +69,7 @@ const ExecutorCallerInputSchema = Type.Object({
   ], { description: "Execution mode." })),
   maxConcurrency: Type.Optional(Type.Number({ description: "Maximum concurrency for executor scheduling." })),
   idleTimeoutMs: Type.Optional(Type.Number({ description: "Max idle time before intervention." })),
+  timeoutMs: Type.Optional(Type.Number({ description: "Maximum total runtime before forced termination." })),
   terminateGraceMs: Type.Optional(Type.Number({ description: "Grace period between SIGTERM and SIGKILL." })),
 });
 

@@ -17,6 +17,7 @@ export interface ExecutorCallerRequest {
   mode?: "single" | "parallel" | "sequential" | "dag";
   maxConcurrency?: number;
   idleTimeoutMs?: number;
+  timeoutMs?: number;
   terminateGraceMs?: number;
   inputs?: TaskDocInput[];
   acceptanceCriteria?: string[];
