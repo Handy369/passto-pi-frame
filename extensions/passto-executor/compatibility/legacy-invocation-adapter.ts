@@ -35,6 +35,55 @@ export interface LegacyExecuteRequestOptions extends Omit<ExecuteInvocationOptio
 
 export type CallerExecuteRequestOptions = LegacyExecuteRequestOptions;
 
+const SMALL_TIMEOUT_MS = 8 * 60 * 1000;
+const MEDIUM_TIMEOUT_MS = 15 * 60 * 1000;
+const LARGE_TIMEOUT_MS = 20 * 60 * 1000;
+const MAX_AUTO_TIMEOUT_MS = 25 * 60 * 1000;
+
+const COMPLEXITY_KEYWORDS = [
+  "refactor",
+  "scaffold",
+  "implement",
+  "migrate",
+  "workflow",
+  "builder",
+  "planner",
+  "nested",
+  "test",
+  "commit",
+];
+
+function clampTimeoutMs(value: number) {
+  return Math.max(SMALL_TIMEOUT_MS, Math.min(MAX_AUTO_TIMEOUT_MS, Math.floor(value)));
+}
+
+export function estimateExecutorTimeoutMs(request: ExecutorCallerRequest): number {
+  if (typeof request.timeoutMs === "number" && Number.isFinite(request.timeoutMs) && request.timeoutMs > 0) {
+    return clampTimeoutMs(request.timeoutMs);
+  }
+
+  let score = 0;
+  const todoCount = request.todolist?.length ?? 0;
+  const outputCount = request.outputs?.length ?? 0;
+  const constraintCount = request.constraints?.length ?? 0;
+  const promptCount = request.prompts?.length ?? 0;
+  const text = [request.goal, ...(request.prompts ?? []), request.stage ?? "", ...(request.outputs ?? [])]
+    .join("\n")
+    .toLowerCase();
+
+  if (todoCount >= 3) score += 1;
+  if (todoCount >= 5) score += 1;
+  if (outputCount >= 3) score += 1;
+  if (constraintCount >= 4) score += 1;
+  if (promptCount >= 3) score += 1;
+  if (request.mode && request.mode !== "single") score += 1;
+  if (COMPLEXITY_KEYWORDS.some((keyword) => text.includes(keyword))) score += 2;
+
+  if (score >= 4) return clampTimeoutMs(LARGE_TIMEOUT_MS);
+  if (score >= 2) return clampTimeoutMs(MEDIUM_TIMEOUT_MS);
+  return clampTimeoutMs(SMALL_TIMEOUT_MS);
+}
+
 export function legacyRequestToInvocation(request: LegacySubagentLikeRequest): ExecutorInvocation {
   return {
     sourceTaskDocPath: "compatibility://legacy-subagent-like-request",
@@ -139,7 +188,7 @@ export function callerRequestToRuntimePolicy(request: ExecutorCallerRequest): Pa
     mode: request.mode,
     maxConcurrency: request.maxConcurrency,
     idleTimeoutMs: request.idleTimeoutMs,
-    timeoutMs: request.timeoutMs,
+    timeoutMs: estimateExecutorTimeoutMs(request),
     terminateGraceMs: request.terminateGraceMs,
     completionPolicy: "process-exit",
   };
