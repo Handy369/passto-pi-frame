@@ -901,3 +901,12 @@ export default function (pi: ExtensionAPI) {
     },
   });
 }
+
+// Phase 1A: Planner core scaffold exports
+export * from "./planner/contracts.ts";
+export * from "./planner/planning-types.ts";
+export * from "./planner/input.ts";
+export * from "./planner/state.ts";
+export * from "./planner/result.ts";
+export * from "./planner/handoff.ts";
+export * from "./tools/run-planner-task.ts";
