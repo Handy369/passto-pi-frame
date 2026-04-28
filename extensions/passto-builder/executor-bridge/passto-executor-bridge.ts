@@ -58,6 +58,8 @@ export function buildExecutorBridgeRequest(input: NormalizedBuilderInput): Build
       inputs: [],
       hints: {
         preferredRole: "builder",
+        preferredModel: input.preferredModel,
+        preferredThinking: input.preferredThinking,
       },
       mode: "single",
     },

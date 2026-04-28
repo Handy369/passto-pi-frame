@@ -30,6 +30,8 @@ export type BuilderInput = {
   checklist?: BuilderChecklistItem[];
   acceptanceCriteria?: string[];
   driverContext?: string;
+  preferredModel?: string;
+  preferredThinking?: "low" | "medium" | "high";
   stage?: string;
   resumeState?: Record<string, unknown>;
   sandboxStrategy?: "noop" | "temp-copy" | "worktree";
