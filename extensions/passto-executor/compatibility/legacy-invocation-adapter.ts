@@ -4,6 +4,7 @@ import { FileExecutorRunStore, getExecutorWorkspaceRoot } from "../executor-core
 import type { ExecutorInvocation } from "../executor-core/invocation.ts";
 import type { TaskDocInput, TaskDocThinking } from "../executor-core/task-doc.ts";
 import type { ExecutorRuntimePolicy } from "../executor-core/context.ts";
+import { buildBuilderExecutionPrompt, callerRequestToBuilderInput, type ExecutorCallerRequest } from "./builder-input-bridge.ts";
 
 export interface LegacySubagentLikeRequest {
   task: string;
@@ -31,6 +32,8 @@ export interface LegacySubagentLikeRequest {
 export interface LegacyExecuteRequestOptions extends Omit<ExecuteInvocationOptions, "extensions"> {
   extensions?: string[];
 }
+
+export type CallerExecuteRequestOptions = LegacyExecuteRequestOptions;
 
 export function legacyRequestToInvocation(request: LegacySubagentLikeRequest): ExecutorInvocation {
   return {
@@ -90,6 +93,72 @@ export function legacyRequestToExecuteOptions(
   };
 }
 
+export function callerRequestToInvocation(request: ExecutorCallerRequest): ExecutorInvocation {
+  const cwd = request.cwd ?? process.cwd();
+  const builderInput = callerRequestToBuilderInput(request);
+  return {
+    sourceTaskDocPath: "compatibility://caller-request",
+    caller: {
+      type: "caller-request",
+      name: request.agent ?? "default",
+    },
+    project: {
+      name: "compatibility-project",
+      cwd,
+    },
+    stage: "builder",
+    executorType: "passto-builder",
+    task: {
+      title: request.goal,
+      description: [
+        "You must invoke the `run_builder_task` tool from `passto-builder` with the exact BuilderInput JSON below.",
+        "Use passto-builder as the actual implementation path. Do not manually implement outside the builder workflow.",
+        "After the builder run completes, return a concise summary including final status, primary run id, produced artifacts, and blockers if any.",
+        "",
+        "BuilderInput JSON:",
+        JSON.stringify(builderInput, null, 2),
+      ].join("\n"),
+    },
+    expectedOutput: {
+      todolist: [...(request.todolist ?? [])],
+      checklist: [...(request.outputs ?? [])],
+    },
+    constraints: [...(request.constraints ?? [])],
+    inputs: [...(request.inputs ?? [])],
+    hints: {
+      preferredModel: request.preferredModel,
+      preferredThinking: request.preferredThinking,
+      preferredRole: "builder",
+    },
+    mode: request.mode ?? "single",
+  };
+}
+
+export function callerRequestToRuntimePolicy(request: ExecutorCallerRequest): Partial<ExecutorRuntimePolicy> {
+  return {
+    mode: request.mode,
+    maxConcurrency: request.maxConcurrency,
+    idleTimeoutMs: request.idleTimeoutMs,
+    terminateGraceMs: request.terminateGraceMs,
+    completionPolicy: "process-exit",
+  };
+}
+
+export function callerRequestToExecuteOptions(
+  request: ExecutorCallerRequest,
+  options: CallerExecuteRequestOptions = {},
+): ExecuteInvocationOptions {
+  const cwd = request.cwd ?? process.cwd();
+  return {
+    ...options,
+    agent: request.agent ?? options.agent,
+    extensions: request.extensions ?? options.extensions,
+    runStore: options.runStore ?? new FileExecutorRunStore({
+      rootDir: getExecutorWorkspaceRoot(cwd),
+    }),
+  };
+}
+
 export async function executeLegacyRequest(
   request: LegacySubagentLikeRequest,
   options: LegacyExecuteRequestOptions,
@@ -101,4 +170,16 @@ export async function executeLegacyRequest(
   });
 
   return executeResolvedContext(context, legacyRequestToExecuteOptions(request, options));
+}
+
+export async function executeCallerRequest(
+  request: ExecutorCallerRequest,
+  options: CallerExecuteRequestOptions = {},
+) {
+  const invocation = callerRequestToInvocation(request);
+  const context = assembleExecutorContext(invocation, {
+    runId: options.runId,
+    defaultRuntimePolicy: callerRequestToRuntimePolicy(request),
+  });
+  return executeResolvedContext(context, callerRequestToExecuteOptions(request, options));
 }

@@ -48,11 +48,11 @@ export function buildExecutorBridgeRequest(input: NormalizedBuilderInput): Build
       executorType: "passto-builder",
       task: {
         title: input.goal,
-        description: input.task,
+        description: input.executionPrompt,
       },
       expectedOutput: {
-        todolist: input.expectedOutputs,
-        checklist: input.checklist.map((item) => item.text),
+        todolist: input.todolist,
+        checklist: input.expectedOutputs,
       },
       constraints: input.constraints ?? [],
       inputs: [],

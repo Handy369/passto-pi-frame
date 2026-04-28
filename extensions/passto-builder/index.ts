@@ -20,20 +20,20 @@ export * from "./commands/run-builder-from-json.ts";
 export * from "./tools/run-builder-task.ts";
 
 const BuilderInputSchema = Type.Object({
-  mission: Type.String({ description: "High-level implementation mission for the builder run." }),
-  objective: Type.String({ description: "Concrete build objective or target deliverable." }),
-  workingDirectory: Type.String({ description: "Absolute working directory for the builder run." }),
-  outputDir: Type.String({ description: "Directory where builder artifacts and summaries should be written." }),
-  executionMode: Type.Optional(Type.Union([
-    Type.Literal("single"),
-    Type.Literal("sequential"),
-    Type.Literal("parallel"),
-    Type.Literal("dag"),
-  ], { description: "Execution mode for builder perspectives." })),
-  perspectives: Type.Optional(Type.Array(Type.String(), { description: "Optional perspective names to run." })),
-  requiredArtifacts: Type.Optional(Type.Array(Type.String(), { description: "Artifacts the builder must produce or verify." })),
+  goal: Type.String({ description: "Builder goal." }),
+  cwd: Type.String({ description: "Absolute working directory for the builder run." }),
+  executionPrompt: Type.String({ description: "High-density execution prompt prepared for builder convergence." }),
+  expectedOutputs: Type.Optional(Type.Array(Type.String(), { description: "Expected outputs the builder should produce." })),
+  todolist: Type.Optional(Type.Array(Type.String(), { description: "Optional todo list for builder local planning." })),
+  constraints: Type.Optional(Type.Array(Type.String(), { description: "Optional execution constraints." })),
   acceptanceCriteria: Type.Optional(Type.Array(Type.String(), { description: "Acceptance criteria for the builder run." })),
-  bootstrapContext: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Optional bootstrap context metadata." })),
+  driverContext: Type.Optional(Type.String({ description: "Optional driver context summary." })),
+  stage: Type.Optional(Type.String({ description: "Optional builder stage or mode label." })),
+  executionEngine: Type.Optional(Type.String({ description: "Builder execution engine, e.g. ralph-loop." })),
+  projectMetadataPath: Type.Optional(Type.String({ description: "Optional .passto-ai/project.md path." })),
+  plannerDir: Type.Optional(Type.String({ description: "Optional planner workspace directory." })),
+  executorDir: Type.Optional(Type.String({ description: "Optional executor workspace directory." })),
+  builderDir: Type.Optional(Type.String({ description: "Optional builder workspace directory." })),
 });
 
 export default function (pi: ExtensionAPI) {

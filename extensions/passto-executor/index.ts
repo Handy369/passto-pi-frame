@@ -2,9 +2,11 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { Type } from "typebox";
 import {
+  executeCallerRequest,
   executeLegacyRequest,
   legacyRequestToExecuteOptions,
   legacyRequestToInvocation,
+  type ExecutorCallerRequest,
   type LegacySubagentLikeRequest,
 } from "./compatibility/index.ts";
 
@@ -33,18 +35,39 @@ export type { ResolvedExecutorRunContext, ExecutorRuntimePolicy } from "./execut
 export type { ExecutorRunResult } from "./executor-core/result.ts";
 export type { SandboxCleanupPolicy } from "./executor-core/sandbox.ts";
 export {
+  callerRequestToExecuteOptions,
+  callerRequestToInvocation,
+  callerRequestToRuntimePolicy,
   legacyRequestToRuntimePolicy,
+  executeCallerRequest,
   executeLegacyRequest as executeExecutorLegacyRequest,
+  type CallerExecuteRequestOptions,
   type LegacyExecuteRequestOptions,
 } from "./compatibility/index.ts";
 
-const LegacyRequestSchema = Type.Object({
+const ExecutorCallerInputSchema = Type.Object({
+  goal: Type.String({ description: "Caller goal to be bridged into builder execution." }),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the run. Defaults to current cwd." })),
+  todolist: Type.Optional(Type.Array(Type.String(), { description: "Optional task decomposition list." })),
+  outputs: Type.Optional(Type.Array(Type.String(), { description: "Expected outputs to produce." })),
+  prompts: Type.Optional(Type.Array(Type.String(), { description: "Additional prompts for executor bridge expansion." })),
+  constraints: Type.Optional(Type.Array(Type.String(), { description: "Optional execution constraints." })),
+  stage: Type.Optional(Type.String({ description: "Business or execution stage label." })),
   agent: Type.Optional(Type.String({ description: "Runtime agent profile name or markdown profile path." })),
-  task: Type.String({ description: "Task description for the delegated execution." }),
-  cwd: Type.String({ description: "Working directory for the run." }),
   extensions: Type.Optional(Type.Array(Type.String(), { description: "Extra child extensions to inject." })),
-  executionContract: Type.Optional(Type.String({ description: "Optional execution contract, e.g. ralph-loop." })),
-  completionPolicy: Type.Optional(Type.String({ description: "Completion policy: agent-end or process-exit." })),
+  preferredModel: Type.Optional(Type.String({ description: "Preferred model for runtime execution." })),
+  preferredThinking: Type.Optional(Type.Union([
+    Type.Literal("low"),
+    Type.Literal("medium"),
+    Type.Literal("high"),
+  ], { description: "Preferred thinking depth." })),
+  mode: Type.Optional(Type.Union([
+    Type.Literal("single"),
+    Type.Literal("sequential"),
+    Type.Literal("parallel"),
+    Type.Literal("dag"),
+  ], { description: "Execution mode." })),
+  maxConcurrency: Type.Optional(Type.Number({ description: "Maximum concurrency for executor scheduling." })),
   idleTimeoutMs: Type.Optional(Type.Number({ description: "Max idle time before intervention." })),
   terminateGraceMs: Type.Optional(Type.Number({ description: "Grace period between SIGTERM and SIGKILL." })),
 });
@@ -406,25 +429,25 @@ function formatExecutorResult(result: Awaited<ReturnType<typeof executeLegacyReq
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("passto-executor", {
-    description: "Run a bounded passto-executor task from a JSON legacy-style request.",
+    description: "Run a bounded passto-executor task from a caller-oriented JSON request.",
     handler: async (args, ctx) => {
       const raw = args.trim();
       if (!raw) {
-        ctx.ui?.notify("Usage: /passto-executor <JSON LegacySubagentLikeRequest>", "warning");
+        ctx.ui?.notify("Usage: /passto-executor <JSON ExecutorCallerRequest>", "warning");
         return;
       }
 
       try {
-        const request = JSON.parse(raw) as LegacySubagentLikeRequest;
+        const request = JSON.parse(raw) as ExecutorCallerRequest;
         const runId = randomUUID();
         const realtimeCard = createRealtimeExecutorCard(runId, "starting");
-        const result = await executeLegacyRequest(request, legacyRequestToExecuteOptions(request, {
+        const result = await executeCallerRequest(request, {
           runId,
           agent: request.agent ?? "default",
           onChildProgress(update) {
             realtimeCard.applyProgress(update);
           },
-        }));
+        });
         const formatted = formatExecutorResult(result);
         realtimeCard.finalize(formatted.status, formatted);
         ctx.ui?.notify(`Executor completed: ${formatted.status}`, formatted.status === "completed" ? "info" : "warning");
@@ -439,14 +462,14 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "run_executor_task",
     label: "Run executor task",
-    description: "Execute a bounded passto-executor task using the compatibility legacy request shape.",
-    parameters: LegacyRequestSchema,
+    description: "Execute a bounded passto-executor task using the caller-oriented request shape.",
+    parameters: ExecutorCallerInputSchema,
     async execute(_id, params, _signal, onUpdate) {
-      const request = params as LegacySubagentLikeRequest;
+      const request = params as ExecutorCallerRequest;
       const runId = randomUUID();
       const realtimeCard = createRealtimeExecutorCard(runId, "starting");
       onUpdate?.({ content: [{ type: "text", text: renderExecutorCard(realtimeCard.snapshot()).join("\n") }] });
-      const result = await executeLegacyRequest(request, legacyRequestToExecuteOptions(request, {
+      const result = await executeCallerRequest(request, {
         runId,
         agent: request.agent ?? "default",
         onChildProgress(update) {
@@ -454,7 +477,7 @@ export default function (pi: ExtensionAPI) {
           const rendered = renderExecutorCard(realtimeCard.snapshot()).join("\n");
           onUpdate?.({ content: [{ type: "text", text: rendered }] });
         },
-      }));
+      });
       const formatted = formatExecutorResult(result);
       realtimeCard.finalize(formatted.status, formatted);
       const rendered = renderExecutorCard(realtimeCard.snapshot()).join("\n");
@@ -462,7 +485,7 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: rendered }],
         details: {
-          invocation: legacyRequestToInvocation(request),
+          invocation: request,
           result: formatted,
           card: realtimeCard.snapshot(),
         },

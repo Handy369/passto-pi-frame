@@ -18,7 +18,7 @@ export async function runRalphLoopEngine(
     {
       engineId: "ralph-loop",
       status: "starting",
-      summary: `Starting Ralph loop for task: ${input.task.slice(0, 80)}`,
+      summary: `Starting Ralph loop for task: ${(input.executionPrompt ?? "").slice(0, 80)}`,
     },
     {
       engineId: "ralph-loop",

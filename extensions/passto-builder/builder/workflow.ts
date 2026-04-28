@@ -23,10 +23,12 @@ export async function runBuilderWorkflow(
 
   state.phase = "local_plan";
   state.currentAction = "Generating local execution todo list";
-  state.todoList = [
-    `Review task: ${state.input.goal}`,
-    ...state.input.expectedOutputs.map((output) => `Produce output: ${output}`),
-  ];
+  state.todoList = state.input.todolist.length > 0
+    ? [...state.input.todolist]
+    : [
+        `Review task: ${state.input.goal}`,
+        ...state.input.expectedOutputs.map((output) => `Produce output: ${output}`),
+      ];
   state.summary = "Local execution plan prepared";
   onSnapshot?.(state);
 
@@ -60,7 +62,7 @@ export async function runBuilderWorkflow(
     cwd: state.input.cwd,
     title: state.input.goal,
     lines: [
-      `Task: ${state.input.task}`,
+      `Execution prompt: ${state.input.executionPrompt}`,
       `Executor run id: ${bridgeRequest.runId}`,
       `Loop summary: ${loop.result.summary}`,
       `Expected outputs: ${state.input.expectedOutputs.join(", ") || "(none specified)"}`,

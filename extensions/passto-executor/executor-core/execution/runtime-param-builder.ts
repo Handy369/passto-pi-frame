@@ -17,10 +17,10 @@ export function buildRunExecutorChildParams(input: BuildRunExecutorChildParamsIn
   const contractLifecycle = getContractLifecycleConfig(contractName);
 
   return {
-    agent: input.perspective.agent ?? (contractName === "ralph-loop" ? "ralph-executor" : input.defaultAgent),
+    agent: input.perspective.agent ?? input.defaultAgent,
     prompt: input.perspective.task,
     cwd: input.cwd,
-    extensions: input.perspective.extensions ?? input.defaultExtensions,
+    extensions: undefined,
     executionPolicy: {
       completionPolicy: contractLifecycle.completionPolicy ?? "process-exit",
       idleTimeoutMs: perspectivePolicy?.idleTimeoutMs

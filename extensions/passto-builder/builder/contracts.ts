@@ -14,6 +14,7 @@ export type BuilderArtifactRef = {
 
 export type BuilderInput = {
   goal: string;
+  executionPrompt?: string;
   task?: string;
   taskPackage?: {
     title?: string;
@@ -24,13 +25,19 @@ export type BuilderInput = {
   };
   cwd: string;
   expectedOutputs: string[];
+  todolist?: string[];
   constraints?: string[];
   checklist?: BuilderChecklistItem[];
   acceptanceCriteria?: string[];
   driverContext?: string;
+  stage?: string;
   resumeState?: Record<string, unknown>;
   sandboxStrategy?: "noop" | "temp-copy" | "worktree";
   executionEngine?: "ralph-loop";
+  projectMetadataPath?: string;
+  plannerDir?: string;
+  executorDir?: string;
+  builderDir?: string;
 };
 
 export type BuilderPhase =
