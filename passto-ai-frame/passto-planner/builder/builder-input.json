@@ -1,0 +1,45 @@
+{
+  "cwd": "/Users/handy/dev/pi-sandbox",
+  "goal": "Implement the first frame-native passto-planner bootstrap vertical slice with bounded nested expert execution and planner-owned handoff artifacts.",
+  "task": "Implement the initial runtime scaffold for extensions/passto-planner/, including planner contracts, planning type boundary, one technical-architecture perspective, nested execution guards/bridge, planner-owned synthesis artifact writing, structured planner result shaping, and an initial planner-to-builder handoff artifact aligned with the .passto-ai project workspace protocol.",
+  "executionEngine": "ralph-loop",
+  "constraints": [
+    "Implement in extensions/passto-planner/ as a frame-native planner executor rather than reviving the legacy linear planner structure.",
+    "Run through passto-executor rather than bypassing it.",
+    "Support planningType values standalone-product and pi-ecosystem-product from the start.",
+    "Use exactly one bounded expert child perspective in the first slice, preferably technical-architecture.",
+    "Planner must retain ownership of synthesis, artifact writing, and planner-to-builder handoff shaping.",
+    "Planner-owned artifacts should target the shared .passto-ai workspace protocol.",
+    "Avoid broad executor rewrites unless a tiny seam proves necessary during the slice.",
+    "Keep scope bounded to the first meaningful bootstrap milestone."
+  ],
+  "expectedOutputs": [
+    "extensions/passto-planner/package.json",
+    "extensions/passto-planner/index.ts",
+    "extensions/passto-planner/README.md",
+    "extensions/passto-planner/planner/contracts.ts",
+    "extensions/passto-planner/planner/input.ts",
+    "extensions/passto-planner/planner/planning-types.ts",
+    "extensions/passto-planner/planner/perspectives.ts",
+    "extensions/passto-planner/planner/state.ts",
+    "extensions/passto-planner/planner/workflow.ts",
+    "extensions/passto-planner/planner/runner.ts",
+    "extensions/passto-planner/planner/result.ts",
+    "extensions/passto-planner/planner/handoff.ts",
+    "extensions/passto-planner/planner/nested-execution.ts",
+    "extensions/passto-planner/executor-bridge/perspective-executor-bridge.ts",
+    "extensions/passto-planner/executor-bridge/nested-executor-guards.ts",
+    "extensions/passto-planner/commands/run-planner.ts",
+    "extensions/passto-planner/tools/run-planner-task.ts"
+  ],
+  "checklist": [
+    { "text": "Create minimal planner contracts and result types for the bootstrap slice" },
+    { "text": "Introduce explicit planning-type normalization and validation" },
+    { "text": "Create one perspective definition for technical-architecture" },
+    { "text": "Implement a bounded nested child execution bridge and guard layer" },
+    { "text": "Write planner-owned synthesis artifacts under the shared .passto-ai workspace" },
+    { "text": "Emit a structured planner result with parent-child run linkage" },
+    { "text": "Emit an initial planner-handoff artifact suitable for future builder consumption" },
+    { "text": "Add one command/tool entry surface and focused bootstrap tests" }
+  ]
+}
