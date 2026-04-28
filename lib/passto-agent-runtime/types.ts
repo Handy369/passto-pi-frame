@@ -72,6 +72,7 @@ export type PiChildRunOptions = {
   skills?: string[];
   noTools?: boolean;
   noExtensions?: boolean;
+  inheritParentExtensions?: boolean;
   noSkills?: boolean;
   noPromptTemplates?: boolean;
   noContextFiles?: boolean;
@@ -98,6 +99,7 @@ export type AgentProfile = {
   tools?: string[];
   skills?: string[];
   extensions?: string[];
+  inheritParentExtensions?: boolean;
   sessionMode?: SessionMode;
   timeoutMs?: number;
   completionPolicy?: CompletionPolicy;

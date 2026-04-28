@@ -258,10 +258,12 @@ export function buildPiArgs(input: BuildPiArgsInput): string[] {
   const sessionMode = resolveSessionMode(options.sessionMode);
   const inheritedCli = inherited ?? parseInheritedCliArgs(process.argv);
 
+  const inheritedExtensionArgs = options.inheritParentExtensions === false ? [] : inheritedCli.extensionArgs;
+
   const args: string[] = [
     "--mode",
     "json",
-    ...inheritedCli.extensionArgs,
+    ...inheritedExtensionArgs,
     ...inheritedCli.alwaysProxy,
     "-p",
   ];
