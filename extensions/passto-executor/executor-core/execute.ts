@@ -17,6 +17,11 @@ export interface ExecuteInvocationOptions {
   runStore?: ExecutorRunStore;
   sandboxManager?: SandboxManager;
   childRunner?: (params: RunExecutorChildParams) => Promise<ExecutorChildResult>;
+  onChildProgress?: (update: {
+    runId: string;
+    perspective: string;
+    progress: ExecutorChildResult["progress"] & { usage?: ExecutorChildResult["usage"] };
+  }) => void;
 }
 
 

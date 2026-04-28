@@ -1,4 +1,4 @@
-import { runSubagent, type SubagentRunResult, type SubagentUsage } from "../../../lib/passto-agent-runtime/index.ts";
+import { runSubagent, type SubagentRunResult, type SubagentUsage, type SubagentProgress } from "../../../lib/passto-agent-runtime/index.ts";
 
 export interface ExecutorChildProgress {
   phase?: "starting" | "running" | "finishing" | "done" | "error";
@@ -47,6 +47,7 @@ export interface RunExecutorChildParams {
   extensions?: string[];
   executionPolicy?: ExecutorRuntimeExecutionPolicy;
   transport?: ExecutorRuntimeTransportOptions;
+  onProgress?: (progress: ExecutorChildProgress & { usage?: SubagentUsage }) => void;
 }
 
 export function toSubagentRunParams(params: RunExecutorChildParams) {
@@ -68,8 +69,24 @@ export function toSubagentRunParams(params: RunExecutorChildParams) {
   };
 }
 
+function toExecutorChildProgress(progress: SubagentProgress): ExecutorChildProgress & { usage?: SubagentUsage } {
+  return {
+    phase: progress.phase,
+    elapsedMs: progress.elapsedMs,
+    currentTool: progress.currentTool,
+    currentToolArgsPreview: progress.currentToolArgsPreview,
+    lastAssistantText: progress.lastAssistantText,
+    recentActivity: progress.recentActivity,
+    usage: progress.usage,
+  };
+}
+
 export async function runExecutorChild(params: RunExecutorChildParams): Promise<ExecutorChildResult> {
-  const result = await runSubagent(toSubagentRunParams(params));
+  const result = await runSubagent(toSubagentRunParams(params), {
+    onProgress(progress) {
+      params.onProgress?.(toExecutorChildProgress(progress));
+    },
+  });
 
   return {
     runId: result.runId,

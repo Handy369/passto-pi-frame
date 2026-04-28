@@ -79,6 +79,7 @@ export async function executePlannedItemsSequentially(params: ExecutePlannedItem
       childRunner: params.childRunner,
       contract: params.options.contract,
       runStore: params.runStore,
+      onChildProgress: params.options.onChildProgress,
     });
     perspectiveResults.push(executed.perspectiveResult);
     events.push(...executed.events);
@@ -198,6 +199,7 @@ export async function executePlannedItemsInParallel(params: ExecutePlannedItemsP
         childRunner: params.childRunner,
         contract: params.options.contract,
         runStore: params.runStore,
+        onChildProgress: params.options.onChildProgress,
       });
       return { item, executed };
     }));
