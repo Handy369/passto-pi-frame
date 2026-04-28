@@ -44,7 +44,9 @@ export interface RunExecutorChildParams {
   agent: string;
   prompt: string;
   cwd: string;
+  tools?: string[];
   extensions?: string[];
+  appendSystemPrompt?: string;
   executionPolicy?: ExecutorRuntimeExecutionPolicy;
   transport?: ExecutorRuntimeTransportOptions;
   onProgress?: (progress: ExecutorChildProgress & { usage?: SubagentUsage }) => void;
@@ -55,7 +57,9 @@ export function toSubagentRunParams(params: RunExecutorChildParams) {
     agent: params.agent,
     prompt: params.prompt,
     cwd: params.cwd,
+    tools: params.tools,
     extensions: params.extensions,
+    appendSystemPrompt: params.appendSystemPrompt,
     sessionMode: params.transport?.sessionMode,
     forkSessionSnapshotJsonl: params.transport?.forkSessionSnapshotJsonl,
     completionPolicy: params.executionPolicy?.completionPolicy,
