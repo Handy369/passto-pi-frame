@@ -933,4 +933,5 @@ export * from "./planner/result.ts";
 export * from "./planner/handoff.ts";
 export * from "./planner/workflow.ts";
 export * from "./planner/runner.ts";
+export * from "./planner/nested-execution.ts";
 export * from "./tools/run-planner-task.ts";

@@ -1,7 +1,7 @@
 // Phase 1B.1: Minimal planner workflow skeleton.
 // Extracts scaffold execution shaping into the workflow layer.
 // This module owns phase progression and returns result + handoff data.
-// It does NOT implement runner.ts or nested-execution.ts.
+// It references a future nested-execution seam but does NOT perform real nested orchestration.
 
 import type {
   PlannerNormalizedInput,
@@ -12,6 +12,7 @@ import type {
 import { createInitialPlannerState } from "./state.ts";
 import { toPlannerResult } from "./result.ts";
 import { createPlannerHandoff } from "./handoff.ts";
+import { createNestedExecutionPlaceholderRequest, runNestedPlannerExecution } from "./nested-execution.ts";
 
 export interface PlannerWorkflowOutput {
   result: PlannerResult;
@@ -45,10 +46,27 @@ export async function runPlannerWorkflow(
 
   state.status = "completed";
 
+  const nestedExecution = await runNestedPlannerExecution(
+    createNestedExecutionPlaceholderRequest({
+      runId,
+      goal: input.goal,
+      phase: "analysis",
+    }),
+  );
+
   const producedArtifacts: PlannerArtifactRef[] = [
     {
       type: "planner-workflow-scaffold",
       summary: "Phase 1B planner workflow skeleton executed",
+    },
+    {
+      type: "nested-execution-seam",
+      summary: nestedExecution.summary,
+      metadata: {
+        active: nestedExecution.active,
+        status: nestedExecution.status,
+        strategy: nestedExecution.strategy,
+      },
     },
   ];
 
@@ -57,17 +75,17 @@ export async function runPlannerWorkflow(
     resultSummary: "Phase 1B planner workflow skeleton initialized",
     producedArtifacts,
     remainingWork: [
-      "Implement planner runner entry point",
-      "Add nested-execution support",
+      "Implement real nested-execution orchestration",
+      "Refine planner workflow behavior",
       "Build planner test suite",
     ],
-    handoffNote: "Phase 1B workflow skeleton complete. Ready for runner implementation.",
+    handoffNote: "Phase 1B runtime scaffold complete. Nested execution seam is defined for a later implementation phase.",
     primaryRunId: runId,
   });
 
   const handoff = createPlannerHandoff({
     from: "planner-workflow",
-    to: "planner-runner",
+    to: "planner-nested-execution",
     runId,
     resultSummary: result.resultSummary,
     artifacts: producedArtifacts,
