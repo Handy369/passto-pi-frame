@@ -11,3 +11,4 @@ extensions/agent-web-search-pro/config.json
 # local scratch
 .tmp/
 .cache/
+.ralph/
