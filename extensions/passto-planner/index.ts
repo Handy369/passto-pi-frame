@@ -931,4 +931,5 @@ export * from "./planner/input.ts";
 export * from "./planner/state.ts";
 export * from "./planner/result.ts";
 export * from "./planner/handoff.ts";
+export * from "./planner/workflow.ts";
 export * from "./tools/run-planner-task.ts";
