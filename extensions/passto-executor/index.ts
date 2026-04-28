@@ -23,7 +23,7 @@ export {
 const LegacyRequestSchema = Type.Object({
   agent: Type.String({ description: "Runtime agent profile name or markdown profile path." }),
   task: Type.String({ description: "Task description for the delegated execution." }),
-  cwd: Type.Optional(Type.String({ description: "Working directory for the run." })),
+  cwd: Type.String({ description: "Working directory for the run." }),
   extensions: Type.Optional(Type.Array(Type.String(), { description: "Extra child extensions to inject." })),
   executionContract: Type.Optional(Type.String({ description: "Optional execution contract, e.g. ralph-loop." })),
   completionPolicy: Type.Optional(Type.String({ description: "Completion policy: agent-end or process-exit." })),
@@ -35,12 +35,11 @@ function formatExecutorResult(result: Awaited<ReturnType<typeof executeLegacyReq
   return {
     status: result.status,
     runId: result.runId,
-    summary: result.summary,
-    manifestPath: result.manifestPath,
-    resultPath: result.resultPath,
-    failurePath: result.failurePath,
+    summaryText: result.summaryText,
     perspectiveResults: result.perspectiveResults,
     events: result.events,
+    failure: result.failure,
+    usage: result.usage,
   };
 }
 

@@ -2,6 +2,7 @@ import { assembleExecutorContext } from "./assembly.ts";
 import type { ExecutorInvocation } from "./invocation.ts";
 import { buildAggregatedExecutorRunResult, type ExecutorRunResult } from "./result.ts";
 import { buildRunManifest, InMemoryExecutorRunStore, resultToStoredRecord, type ExecutorRunStore } from "./run-store.ts";
+import { ensurePasstoProjectWorkspace } from "./project-workspace.ts";
 import { runExecutorChild, type ExecutorChildResult, type RunExecutorChildParams } from "./runtime.ts";
 import { NoopSandboxManager, type SandboxManager } from "./sandbox.ts";
 import type { ResolvedExecutorRunContext } from "./context.ts";
@@ -25,6 +26,7 @@ export async function executeResolvedContext(context: ResolvedExecutorRunContext
   const childRunner = options.childRunner ?? runExecutorChild;
   const plan = planPerspectiveExecution(context);
   assertSupportedExecutionMode(plan.mode, plan.dagValidation);
+  await ensurePasstoProjectWorkspace(context.workspace.projectRoot);
 
   await runStore.createRun(options.runId, buildRunManifest({
     runId: options.runId,

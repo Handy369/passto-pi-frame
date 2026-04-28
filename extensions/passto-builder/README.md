@@ -49,6 +49,26 @@ Current limitations:
 - artifact/result mapping is still intentionally lightweight compared with a production provenance model
 - command/tool integration is not yet production-shaped
 - some public-entry-path tests are intentionally heavier and are beginning to be separated from the fast default workflow-focused set
+- task-file and `project.md` consumption from the planner workspace protocol is not yet fully implemented
+
+## Project workspace protocol alignment
+
+`passto-builder` should align with the shared project-local workspace rooted at:
+
+```text
+<cwd>/.passto-ai/
+```
+
+In particular, builder should treat these as the default collaboration paths:
+- `<cwd>/.passto-ai/project.md`
+- `<cwd>/.passto-ai/planner/`
+- `<cwd>/.passto-ai/executor/`
+- `<cwd>/.passto-ai/builder/`
+
+The current bootstrap implementation should now default builder-owned note/report artifacts into:
+- `<cwd>/.passto-ai/builder/`
+
+Task-file-driven loading from planner outputs is a next step, but the path protocol itself is now part of the expected builder posture.
 
 ## Milestone status
 

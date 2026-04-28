@@ -125,6 +125,14 @@ export interface FileExecutorRunStoreOptions {
   rootDir: string;
 }
 
+export function getProjectPasstoAiDir(projectRoot: string): string {
+  return path.join(projectRoot, ".passto-ai");
+}
+
+export function getExecutorWorkspaceRoot(projectRoot: string): string {
+  return path.join(getProjectPasstoAiDir(projectRoot), "executor");
+}
+
 export class FileExecutorRunStore implements ExecutorRunStore {
   private options: FileExecutorRunStoreOptions;
 

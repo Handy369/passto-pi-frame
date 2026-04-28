@@ -1,5 +1,6 @@
 import { assembleExecutorContext } from "../executor-core/assembly.ts";
 import { executeResolvedContext, type ExecuteInvocationOptions } from "../executor-core/execute.ts";
+import { FileExecutorRunStore, getExecutorWorkspaceRoot } from "../executor-core/run-store.ts";
 import type { ExecutorInvocation } from "../executor-core/invocation.ts";
 import type { TaskDocInput, TaskDocThinking } from "../executor-core/task-doc.ts";
 import type { ExecutorRuntimePolicy } from "../executor-core/context.ts";
@@ -78,11 +79,14 @@ export function legacyRequestToRuntimePolicy(request: LegacySubagentLikeRequest)
 
 export function legacyRequestToExecuteOptions(
   request: LegacySubagentLikeRequest,
-  options: LegacyExecuteRequestOptions,
+  options: LegacyExecuteRequestOptions = {},
 ): ExecuteInvocationOptions {
   return {
     ...options,
     extensions: request.extensions ?? options.extensions,
+    runStore: options.runStore ?? new FileExecutorRunStore({
+      rootDir: getExecutorWorkspaceRoot(request.cwd),
+    }),
   };
 }
 

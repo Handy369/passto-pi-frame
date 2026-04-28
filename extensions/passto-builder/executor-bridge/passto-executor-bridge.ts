@@ -1,4 +1,5 @@
 import { executeInvocation, type ExecutorInvocation, type ExecutorRunResult } from "../../passto-executor/index.ts";
+import { getPasstoProjectWorkspaceLayout } from "../../passto-executor/executor-core/project-workspace.ts";
 import type { NormalizedBuilderInput } from "../builder/input.ts";
 
 export type BuilderExecutorBridgeRequest = {
@@ -10,11 +11,16 @@ export type BuilderExecutorBridgeRequest = {
     projectName: string;
     cwd: string;
     executionEngine: "ralph-loop";
+    projectMetadataPath: string;
+    plannerDir: string;
+    executorDir: string;
+    builderDir: string;
   };
 };
 
 export function buildExecutorBridgeRequest(input: NormalizedBuilderInput): BuilderExecutorBridgeRequest {
   const runId = `builder-${Date.now()}`;
+  const workspace = getPasstoProjectWorkspaceLayout(input.cwd);
   return {
     runId,
     agent: "default",
@@ -23,6 +29,10 @@ export function buildExecutorBridgeRequest(input: NormalizedBuilderInput): Build
       projectName: "passto-ai-frame",
       cwd: input.cwd,
       executionEngine: input.executionEngine,
+      projectMetadataPath: workspace.projectMetadataPath,
+      plannerDir: workspace.plannerDir,
+      executorDir: workspace.executorDir,
+      builderDir: workspace.builderDir,
     },
     invocation: {
       sourceTaskDocPath: `builder:${runId}`,

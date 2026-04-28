@@ -15,6 +15,7 @@ export * from "./result.ts";
 export * from "./execute.ts";
 export * from "./task-entry.ts";
 export * from "./run-store.ts";
+export * from "./project-workspace.ts";
 export * from "./store/file-run-store.ts";
 export * from "./store/run-index.ts";
 export * from "./sandbox.ts";

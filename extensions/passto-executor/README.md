@@ -66,6 +66,10 @@ The executor follows this path:
 
 `task.md -> invocation -> assembly -> resolved context -> execution`
 
+And it should align project-local artifacts under the shared workspace protocol:
+
+`<cwd>/.passto-ai/{project.md, planner/, executor/, builder/}`
+
 As a caller, you usually enter through one of two input styles:
 
 1. **task document path**
@@ -143,7 +147,7 @@ This is the best choice when execution is driven programmatically by a caller/or
 
 ## Where the output goes
 
-As a caller, you should think of executor outputs in **three places**.
+As a caller, you should think of executor outputs in **four places**.
 
 ### 1. Immediate run result returned by the API
 The main execution APIs return a structured `ExecutorRunResult`.
@@ -154,12 +158,15 @@ This is the first place to look for:
 - aggregated result data
 - high-level run status
 
-### 2. Persisted run artifacts in the run store
-If you use file-backed storage, executor persists artifacts such as:
+### 2. Persisted run artifacts in the project-local executor workspace
+If you use file-backed storage, executor should persist artifacts such as:
 - manifest metadata
 - events
 - result records
 - failure records
+
+Under the shared project workspace protocol, the default target is:
+- `<cwd>/.passto-ai/executor/`
 
 This is the right place when you want:
 - auditing
@@ -167,7 +174,19 @@ This is the right place when you want:
 - later readback by another tool
 - debugging after the process has ended
 
-### 3. Files produced inside the sandbox/worktree/project
+### 3. Project-local metadata and shared workspace protocol
+Executor should also align with the shared project workspace rooted at:
+- `<cwd>/.passto-ai/`
+
+In particular, executor should expect or help ensure:
+- `<cwd>/.passto-ai/project.md`
+- `<cwd>/.passto-ai/planner/`
+- `<cwd>/.passto-ai/executor/`
+- `<cwd>/.passto-ai/builder/`
+
+This lets planner, executor, and builder collaborate through one project-local protocol instead of writing unrelated artifacts into the workspace root.
+
+### 4. Files produced inside the sandbox/worktree/project
 If the child task edits files or creates artifacts, those outputs live in the execution workspace.
 
 Depending on the sandbox strategy, this may be:
@@ -176,6 +195,26 @@ Depending on the sandbox strategy, this may be:
 - a git worktree
 
 If preservation is enabled or the run fails with preserve-on-failure behavior, you can inspect those files directly.
+
+---
+
+## Project workspace protocol
+
+`passto-executor` should align with the shared project workspace protocol used across planner, executor, and builder.
+
+Project-local baseline:
+
+```text
+<cwd>/
+  .passto-ai/
+    project.md
+    planner/
+    executor/
+    builder/
+```
+
+At minimum, executor should ensure these directories exist before persisting project-local run artifacts.
+For compatibility requests executed through the root command/tool entrypoints, file-backed run artifacts should default to `<cwd>/.passto-ai/executor/`.
 
 ---
 
