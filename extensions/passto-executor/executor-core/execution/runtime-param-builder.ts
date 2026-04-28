@@ -11,7 +11,7 @@ export interface BuildRunExecutorChildParamsInput {
   contract?: string;
 }
 
-const NON_RECURSIVE_IMPLEMENTATION_TOOLS = [
+const IMPLEMENTATION_ONLY_BUILDER_TOOLS = [
   "read",
   "write",
   "edit",
@@ -45,16 +45,15 @@ const NON_RECURSIVE_IMPLEMENTATION_TOOLS = [
   "ralph_done",
 ] as const;
 
-const NON_RECURSIVE_IMPLEMENTATION_APPEND_SYSTEM_PROMPT = [
-  "Execution policy: non-recursive implementation mode.",
-  "You must implement by directly using code-editing and inspection tools only.",
-  "Do not invoke orchestration tools such as run_executor_task, run_builder_task, or subagent.",
-  "Do not perform CLI probing, tsx runtime probing, child-runtime self-invocation, or subagent depth tuning.",
-  "Do not use bash to launch nested executor/builder/subagent runtime processes.",
+const IMPLEMENTATION_ONLY_BUILDER_APPEND_SYSTEM_PROMPT = [
+  "Execution policy: implementation-only builder child mode.",
+  "This child agent is for direct implementation work only using code-editing and inspection tools.",
+  "Orchestration capabilities are intentionally not provided in this child runtime.",
+  "Do not attempt executor/builder/subagent self-invocation or runtime re-entry.",
   "If validation is needed, validate by source-path wiring and lightweight local checks only.",
 ].join("\n");
 
-function shouldUseNonRecursiveImplementationProfile(input: BuildRunExecutorChildParamsInput): boolean {
+function shouldUseImplementationOnlyBuilderProfile(input: BuildRunExecutorChildParamsInput): boolean {
   const executorType = input.context.invocation.executorType?.toLowerCase();
   const stage = input.context.invocation.stage?.toLowerCase();
   const contractName = (input.contract ?? input.perspective.contract?.name ?? input.context.contract?.name ?? "").toLowerCase();
@@ -65,15 +64,15 @@ export function buildRunExecutorChildParams(input: BuildRunExecutorChildParamsIn
   const perspectivePolicy = input.perspective.runtimeOptions;
   const contractName = input.contract ?? input.perspective.contract?.name ?? input.context.contract?.name;
   const contractLifecycle = getContractLifecycleConfig(contractName);
-  const useNonRecursiveImplementationProfile = shouldUseNonRecursiveImplementationProfile(input);
+  const useImplementationOnlyBuilderProfile = shouldUseImplementationOnlyBuilderProfile(input);
 
   return {
     agent: input.perspective.agent ?? input.defaultAgent,
     prompt: input.perspective.task,
     cwd: input.cwd,
-    tools: useNonRecursiveImplementationProfile ? [...NON_RECURSIVE_IMPLEMENTATION_TOOLS] : undefined,
+    tools: useImplementationOnlyBuilderProfile ? [...IMPLEMENTATION_ONLY_BUILDER_TOOLS] : undefined,
     extensions: undefined,
-    appendSystemPrompt: useNonRecursiveImplementationProfile ? NON_RECURSIVE_IMPLEMENTATION_APPEND_SYSTEM_PROMPT : undefined,
+    appendSystemPrompt: useImplementationOnlyBuilderProfile ? IMPLEMENTATION_ONLY_BUILDER_APPEND_SYSTEM_PROMPT : undefined,
     executionPolicy: {
       completionPolicy: contractLifecycle.completionPolicy ?? "process-exit",
       idleTimeoutMs: perspectivePolicy?.idleTimeoutMs
