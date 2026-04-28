@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
+import { runPlannerTask } from "./tools/run-planner-task.ts";
 
 interface PlannerState {
   target: string;
@@ -898,6 +899,27 @@ export default function (pi: ExtensionAPI) {
       activePlanningDirs.delete(params.planningDir);
       updateUI(ctx, params.planningDir);
       return { content: [{ type: "text", text: `passto-planner 已完成。产物目录：${params.planningDir}` }], details: { planningDir: params.planningDir, artifacts: state?.artifacts ?? scanArtifacts(params.planningDir) } };
+    },
+  });
+
+  pi.registerTool({
+    name: "run_planner_task",
+    label: "Run Planner Task",
+    description: "Run the Phase 1A passto-planner scaffold entry point and return planner result plus handoff data.",
+    parameters: Type.Object({
+      goal: Type.String({ description: "Planner goal" }),
+      cwd: Type.String({ description: "Working directory for the planner task" }),
+      constraints: Type.Optional(Type.Array(Type.String({ description: "Planner constraint" }))),
+      expectedOutputs: Type.Optional(Type.Array(Type.String({ description: "Expected planner output" }))),
+      todolist: Type.Optional(Type.Array(Type.String({ description: "Planner task step" }))),
+      stage: Type.Optional(Type.String({ description: "Planner stage label" })),
+    }),
+    async execute(_id, params) {
+      const response = await runPlannerTask(params);
+      return {
+        content: [{ type: "text", text: response.result.resultSummary }],
+        details: response,
+      };
     },
   });
 }
