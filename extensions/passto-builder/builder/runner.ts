@@ -11,10 +11,19 @@ export type BuilderRunResponse = {
   result: BuilderResult;
 };
 
+function assertBuilderInvocationAllowed(input: BuilderInput): void {
+  if (input.invocationSource !== "passto-executor") {
+    throw new Error(
+      "run_builder_task must not be used as a top-level execution entry. Invoke builder runs through passto-executor instead.",
+    );
+  }
+}
+
 export async function runBuilder(
   input: BuilderInput,
   services: BuilderWorkflowServices = {},
 ): Promise<BuilderRunResponse> {
+  assertBuilderInvocationAllowed(input);
   const normalized = normalizeBuilderInput(input);
   const state = createInitialBuilderState(normalized);
   const snapshots: BuilderStateSnapshot[] = [toBuilderStateSnapshot(state)];

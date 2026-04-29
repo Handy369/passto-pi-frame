@@ -32,6 +32,7 @@ export type BuilderInput = {
   driverContext?: string;
   preferredModel?: string;
   preferredThinking?: "low" | "medium" | "high";
+  invocationSource?: "passto-executor" | "passto-builder-command" | "direct-tool";
   stage?: string;
   resumeState?: Record<string, unknown>;
   sandboxStrategy?: "noop" | "temp-copy" | "worktree";

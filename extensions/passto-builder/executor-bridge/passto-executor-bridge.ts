@@ -66,13 +66,21 @@ export function buildExecutorBridgeRequest(input: NormalizedBuilderInput): Build
   };
 }
 
+function toExecutorBuilderInput(input: NormalizedBuilderInput): NormalizedBuilderInput {
+  return {
+    ...input,
+    invocationSource: "passto-executor",
+  };
+}
+
 export type BuilderExecutorInvoker = typeof executeInvocation;
 
 export async function executeBuilderThroughPasstoExecutor(
   input: NormalizedBuilderInput,
   invoker: BuilderExecutorInvoker = executeInvocation,
 ): Promise<ExecutorRunResult> {
-  const request = buildExecutorBridgeRequest(input);
+  const executorInput = toExecutorBuilderInput(input);
+  const request = buildExecutorBridgeRequest(executorInput);
   return invoker(request.invocation, {
     runId: request.runId,
     agent: request.agent,

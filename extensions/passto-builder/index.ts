@@ -28,6 +28,17 @@ const BuilderInputSchema = Type.Object({
   constraints: Type.Optional(Type.Array(Type.String(), { description: "Optional execution constraints." })),
   acceptanceCriteria: Type.Optional(Type.Array(Type.String(), { description: "Acceptance criteria for the builder run." })),
   driverContext: Type.Optional(Type.String({ description: "Optional driver context summary." })),
+  preferredModel: Type.Optional(Type.String({ description: "Preferred model forwarded to the executor-backed builder runtime." })),
+  preferredThinking: Type.Optional(Type.Union([
+    Type.Literal("low"),
+    Type.Literal("medium"),
+    Type.Literal("high"),
+  ], { description: "Preferred thinking depth forwarded to the executor-backed builder runtime." })),
+  invocationSource: Type.Optional(Type.Union([
+    Type.Literal("passto-executor"),
+    Type.Literal("passto-builder-command"),
+    Type.Literal("direct-tool"),
+  ], { description: "Invocation source marker. Top-level direct use is rejected; executor-backed builder runs must pass passto-executor." })),
   stage: Type.Optional(Type.String({ description: "Optional builder stage or mode label." })),
   executionEngine: Type.Optional(Type.String({ description: "Builder execution engine, e.g. ralph-loop." })),
   projectMetadataPath: Type.Optional(Type.String({ description: "Optional .passto-ai/project.md path." })),

@@ -7,7 +7,10 @@ import {
 import { runBuilder } from "../builder/runner.ts";
 
 export async function runBuilderTask(input: BuilderInput) {
-  return runBuilder(input);
+  return runBuilder({
+    ...input,
+    invocationSource: input.invocationSource ?? "direct-tool",
+  });
 }
 
 export function formatBuilderToolResult(result: Awaited<ReturnType<typeof runBuilder>>) {
