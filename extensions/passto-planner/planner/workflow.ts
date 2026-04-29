@@ -19,6 +19,8 @@ import { runStep9Review } from "./review.ts";
 import { runStep10Integration } from "./integration.ts";
 import { runStep11ReviewGate } from "./review-gate.ts";
 import { runStep12FinalPlan } from "./final-plan.ts";
+import { runStep13SectionIndex } from "./section-index.ts";
+import { runStep14Sections } from "./sections.ts";
 
 export interface PlannerWorkflowOutput {
   result: PlannerResult;
@@ -327,9 +329,103 @@ export async function runPlannerWorkflow(
     }
   }
 
-  // ── Nested execution (non-Step 4/9/10/11/12 path) ─────────────────
+  // ── Step 13: Real section index path ──────────────────────────────
+  // Triggered when currentStep === 13 or metadata.sectionIndexMode is set
+  // AND a planningDir is available.
+  const isStep13 = currentStep === 13;
+  const sectionIndexMode = input.metadata.sectionIndexMode === true || input.metadata.step13SectionIndex === true;
+  let ranRealSectionIndex = false;
+  if ((isStep13 || sectionIndexMode) && planningDir) {
+    try {
+      const sectionIndexOutput = await runStep13SectionIndex({
+        runId,
+        planningDir,
+        goal: input.goal,
+        target: typeof target === "string" ? target : undefined,
+      });
+
+      producedArtifacts.push({
+        type: "section-index",
+        path: sectionIndexOutput.filePath,
+        summary: `Step 13 section index completed: ${sectionIndexOutput.summary}`,
+        metadata: {
+          sectionCount: sectionIndexOutput.manifest.length,
+        },
+      });
+
+      if (session) {
+        session.artifacts.push("section-index");
+        session.history.push({
+          step: session.currentStep,
+          at: new Date().toISOString(),
+          action: "next",
+          summary: `Step 13 section index completed: ${sectionIndexOutput.summary}`,
+        });
+        savePlannerSession(session);
+      }
+
+      ranRealSectionIndex = true;
+    } catch (err) {
+      producedArtifacts.push({
+        type: "section-index-error",
+        summary: `Step 13 section index failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { error: true },
+      });
+      remainingWork.push("Re-run Step 13 section index after resolving errors");
+    }
+  }
+
+  // ── Step 14: Real section files path ──────────────────────────────
+  // Triggered when currentStep === 14 or metadata.sectionsMode is set
+  // AND a planningDir is available.
+  const isStep14 = currentStep === 14;
+  const sectionsMode = input.metadata.sectionsMode === true || input.metadata.step14Sections === true;
+  let ranRealSections = false;
+  if ((isStep14 || sectionsMode) && planningDir) {
+    try {
+      const sectionsOutput = await runStep14Sections({
+        runId,
+        planningDir,
+        goal: input.goal,
+        target: typeof target === "string" ? target : undefined,
+      });
+
+      for (const file of sectionsOutput.files) {
+        producedArtifacts.push({
+          type: `section-file-${file.id}`,
+          path: file.filePath,
+          summary: `Section ${file.id} (${file.title}) generated.`,
+          metadata: { sectionId: file.id, sectionTitle: file.title },
+        });
+      }
+
+      if (session) {
+        for (const file of sectionsOutput.files) {
+          session.artifacts.push(`section-${file.id}`);
+        }
+        session.history.push({
+          step: session.currentStep,
+          at: new Date().toISOString(),
+          action: "next",
+          summary: `Step 14 section files completed: ${sectionsOutput.summary}`,
+        });
+        savePlannerSession(session);
+      }
+
+      ranRealSections = true;
+    } catch (err) {
+      producedArtifacts.push({
+        type: "sections-error",
+        summary: `Step 14 section files failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { error: true },
+      });
+      remainingWork.push("Re-run Step 14 section files after resolving errors");
+    }
+  }
+
+  // ── Nested execution (non-Step 4/9/10/11/12/13/14 path) ────────────
   // If we didn't run any real step, keep the placeholder seam active.
-  const ranAnyRealStep = ranRealResearch || ranRealReview || ranRealIntegration || ranRealReviewGate || ranRealFinalPlan;
+  const ranAnyRealStep = ranRealResearch || ranRealReview || ranRealIntegration || ranRealReviewGate || ranRealFinalPlan || ranRealSectionIndex || ranRealSections;
   if (!ranAnyRealStep) {
     const nestedExecution = await runNestedPlannerExecution(
       createNestedExecutionPlaceholderRequest({
@@ -359,7 +455,7 @@ export async function runPlannerWorkflow(
   const result = toPlannerResult({
     finalStatus: "success",
     resultSummary: ranAnyRealStep
-      ? buildStepSummary(ranRealResearch, ranRealReview, ranRealIntegration, ranRealReviewGate, ranRealFinalPlan)
+      ? buildStepSummary(ranRealResearch, ranRealReview, ranRealIntegration, ranRealReviewGate, ranRealFinalPlan, ranRealSectionIndex, ranRealSections)
       : "Phase 1B planner workflow skeleton initialized.",
     producedArtifacts,
     remainingWork: ranAnyRealStep
@@ -369,6 +465,8 @@ export async function runPlannerWorkflow(
           ...(ranRealIntegration ? [] : ["Step 10 integration path (not executed in this run)"]),
           ...(ranRealReviewGate ? [] : ["Step 11 review gate path (not executed in this run)"]),
           ...(ranRealFinalPlan ? [] : ["Step 12 final plan path (not executed in this run)"]),
+          ...(ranRealSectionIndex ? [] : ["Step 13 section index path (not executed in this run)"]),
+          ...(ranRealSections ? [] : ["Step 14 section files path (not executed in this run)"]),
           ...remainingWork,
         ]
       : [
@@ -377,7 +475,7 @@ export async function runPlannerWorkflow(
           "Build planner test suite",
         ],
     handoffNote: ranAnyRealStep
-      ? buildHandoffNote(ranRealResearch, ranRealReview, ranRealIntegration, ranRealReviewGate, ranRealFinalPlan)
+      ? buildHandoffNote(ranRealResearch, ranRealReview, ranRealIntegration, ranRealReviewGate, ranRealFinalPlan, ranRealSectionIndex, ranRealSections)
       : "Phase 1B runtime scaffold complete. Nested execution seam is defined for a later implementation phase.",
     primaryRunId: runId,
   });
@@ -394,6 +492,10 @@ export async function runPlannerWorkflow(
       ? "planner-review-gate-complete"
       : ranRealFinalPlan
       ? "planner-final-plan-complete"
+      : ranRealSectionIndex
+      ? "planner-section-index-complete"
+      : ranRealSections
+      ? "planner-sections-complete"
       : "planner-nested-execution",
     runId,
     resultSummary: result.resultSummary,
@@ -411,6 +513,8 @@ function buildStepSummary(
   integration: boolean,
   reviewGate: boolean,
   finalPlan: boolean,
+  sectionIndex: boolean,
+  sections: boolean,
 ): string {
   const parts: string[] = [];
   if (research) parts.push("Step 4 research");
@@ -418,6 +522,8 @@ function buildStepSummary(
   if (integration) parts.push("Step 10 integration");
   if (reviewGate) parts.push("Step 11 review gate");
   if (finalPlan) parts.push("Step 12 final plan");
+  if (sectionIndex) parts.push("Step 13 section index");
+  if (sections) parts.push("Step 14 section files");
   return `Planner step(s) executed: ${parts.join(", ")}.`;
 }
 
@@ -428,6 +534,8 @@ function buildHandoffNote(
   integration: boolean,
   reviewGate: boolean,
   finalPlan: boolean,
+  sectionIndex: boolean,
+  sections: boolean,
 ): string {
   const parts: string[] = [];
   if (research) parts.push("research");
@@ -435,5 +543,7 @@ function buildHandoffNote(
   if (integration) parts.push("integration");
   if (reviewGate) parts.push("review gate");
   if (finalPlan) parts.push("final plan");
+  if (sectionIndex) parts.push("section index");
+  if (sections) parts.push("section files");
   return `Planner steps complete: ${parts.join(", ")}. Remaining steps for later phases.`;
 }
