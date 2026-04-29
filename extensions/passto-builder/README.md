@@ -27,8 +27,12 @@ The first implementation goal is to provide:
 - a loop-engine boundary
 - a Ralph-backed first loop-engine implementation
 - a bridge to `passto-executor`
-- one command and one tool entrypoint
 - a first executor-backed vertical slice with structured snapshots and final result shaping
+
+Important architecture note:
+- `passto-builder` is internal-only and should not expose command/tool entrypoints to the LLM.
+- `passto-executor` is the only user-visible execution entrypoint in `passto-ai-frame`.
+- builder loop engines are internal build-modes and must not re-enter `passto-executor`.
 
 This package is intentionally early-stage and architecture-first.
 
@@ -39,16 +43,15 @@ The current bootstrap already includes:
 - input normalization
 - builder workflow/state skeleton
 - a Ralph loop engine boundary and first integration path
-- a builder -> `passto-executor` bridge using `executeInvocation(...)`
-- command/tool surfaces with lightweight formatter helpers
-- early tests for contracts, bridge mapping, workflow, command/tool surfaces, and vertical-slice behavior
+- an executor-owned internal builder bridge using `executeInvocation(...)`
+- lightweight formatter helpers for internal/manual workflows
+- early tests for contracts, bridge mapping, workflow, and vertical-slice behavior
 
 Current limitations:
 - the executor-backed path is still an early vertical slice
 - status emission is still snapshot-based rather than event-stream-shaped
 - artifact/result mapping is still intentionally lightweight compared with a production provenance model
-- command/tool integration is not yet production-shaped
-- some public-entry-path tests are intentionally heavier and are beginning to be separated from the fast default workflow-focused set
+- some prior public-entry-path assumptions are being removed as builder becomes internal-only
 - task-file and `project.md` consumption from the planner workspace protocol is not yet fully implemented
 
 ## Project workspace protocol alignment
@@ -78,7 +81,7 @@ See:
 
 ## Manual invocation helpers
 
-Current manual-oriented helpers include:
+Current internal/manual helpers include:
 - `runBuilderCommand(input)`
 - `formatBuilderCommandResult(response)`
 - `runBuilderFromJsonFile(path)`

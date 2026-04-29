@@ -85,5 +85,6 @@ export async function executeBuilderThroughPasstoExecutor(
     runId: request.runId,
     agent: request.agent,
     contract: request.metadata.executionEngine,
+    extensions: [],
   });
 }

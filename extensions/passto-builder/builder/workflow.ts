@@ -47,7 +47,7 @@ export async function runBuilderWorkflow(
     }),
   );
   onSnapshot?.(state);
-  const loop = await runRalphLoopEngine(state.input, services.executorInvoker);
+  const loop = await runRalphLoopEngine(state.input);
   state.summary = loop.result.summary;
   state.completedItems.push("execute");
   state.artifacts.push(

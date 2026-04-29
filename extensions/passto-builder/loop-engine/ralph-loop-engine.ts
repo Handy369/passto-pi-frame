@@ -1,45 +1,36 @@
 import type { NormalizedBuilderInput } from "../builder/input.ts";
-import {
-  buildExecutorBridgeRequest,
-  executeBuilderThroughPasstoExecutor,
-  type BuilderExecutorInvoker,
-} from "../executor-bridge/passto-executor-bridge.ts";
 import type { LoopEngineProgress, LoopEngineResult } from "./types.ts";
 
 export async function runRalphLoopEngine(
   input: NormalizedBuilderInput,
-  invoker?: BuilderExecutorInvoker,
 ): Promise<{
   progress: LoopEngineProgress[];
   result: LoopEngineResult;
 }> {
-  const bridgeRequest = buildExecutorBridgeRequest(input);
   const progress: LoopEngineProgress[] = [
     {
       engineId: "ralph-loop",
       status: "starting",
-      summary: `Starting Ralph loop for task: ${(input.executionPrompt ?? "").slice(0, 80)}`,
+      summary: `Starting Ralph build-mode for task: ${(input.executionPrompt ?? "").slice(0, 80)}`,
     },
     {
       engineId: "ralph-loop",
       status: "running",
-      summary: `Prepared executor bridge request for cwd ${bridgeRequest.cwd}`,
+      summary: "Ralph loop build-mode is constrained to passto-builder internals and will not re-enter passto-executor.",
+    },
+    {
+      engineId: "ralph-loop",
+      status: "completed",
+      summary: "Ralph loop build-mode completed as an internal builder mode without nested executor invocation.",
     },
   ];
-
-  const executorResult = await executeBuilderThroughPasstoExecutor(input, invoker);
-  progress.push({
-    engineId: "ralph-loop",
-    status: executorResult.status === "failed" ? "failed" : "completed",
-    summary: `Executor run ${executorResult.runId} finished with status ${executorResult.status}`,
-  });
 
   return {
     progress,
     result: {
       engineId: "ralph-loop",
-      finalStatus: executorResult.status === "failed" ? "failed" : "completed",
-      summary: executorResult.summaryText,
+      finalStatus: "completed",
+      summary: "Internal builder build-mode completed without passto-executor re-entry.",
     },
   };
 }

@@ -167,11 +167,12 @@ export function callerRequestToInvocation(request: ExecutorCallerRequest): Execu
     task: {
       title: request.goal,
       description: [
-        "You must invoke the `run_builder_task` tool from `passto-builder` with the exact BuilderInput JSON below.",
-        "Use passto-builder as the actual implementation path. Do not manually implement outside the builder workflow.",
-        "After the builder run completes, return a concise summary including final status, primary run id, produced artifacts, and blockers if any.",
+        "Use the executor-wired internal passto-builder path for this task. passto-builder is an internal frame executor, not a user-visible tool.",
+        "Do not attempt to invoke `run_builder_task`, `passto-builder`, or any nested executor/builder entrypoint from within the child runtime.",
+        "Operate only within the implementation-only execution surface already provided by passto-executor.",
+        "After execution completes, return a concise summary including final status, primary run id, produced artifacts, and blockers if any.",
         "",
-        "BuilderInput JSON:",
+        "Internal BuilderInput reference JSON:",
         JSON.stringify(builderInput, null, 2),
       ].join("\n"),
     },
