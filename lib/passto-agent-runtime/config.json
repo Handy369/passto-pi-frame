@@ -12,5 +12,73 @@
         "terminateGraceMs": 10000
       }
     }
+  },
+  "executor": {
+    "defaults": {
+      "mode": "single",
+      "completionPolicy": "process-exit",
+      "idleTimeoutMs": 15000,
+      "timeoutMs": 900000,
+      "terminateGraceMs": 5000,
+      "maxConcurrency": 1,
+      "sandboxCleanupPolicy": "on-success",
+      "preserveSandboxOnFailure": true,
+      "preferredThinking": "medium"
+    },
+    "modelPolicy": {
+      "defaultModel": null,
+      "fallbackModels": [],
+      "roleDefaults": {
+        "builder": {
+          "preferredModel": null,
+          "preferredThinking": "high",
+          "fallbackModels": []
+        },
+        "reviewer": {
+          "preferredModel": null,
+          "preferredThinking": "medium",
+          "fallbackModels": []
+        },
+        "planner": {
+          "preferredModel": null,
+          "preferredThinking": "medium",
+          "fallbackModels": []
+        },
+        "implementation-only": {
+          "preferredModel": null,
+          "preferredThinking": "high",
+          "fallbackModels": []
+        }
+      }
+    },
+    "timeouts": {
+      "smallTaskMs": 480000,
+      "mediumTaskMs": 900000,
+      "largeTaskMs": 1200000,
+      "maxAutoTimeoutMs": 1500000
+    },
+    "contracts": {
+      "ralph-loop": {
+        "completionPolicy": "process-exit",
+        "idleTimeoutMs": 60000,
+        "timeoutMs": 1200000,
+        "terminateGraceMs": 10000,
+        "preferredThinking": "high"
+      }
+    },
+    "stages": {
+      "builder": {
+        "preferredThinking": "high",
+        "timeoutMs": 1200000
+      },
+      "reviewer": {
+        "preferredThinking": "medium",
+        "timeoutMs": 600000
+      },
+      "planner": {
+        "preferredThinking": "medium",
+        "timeoutMs": 900000
+      }
+    }
   }
 }

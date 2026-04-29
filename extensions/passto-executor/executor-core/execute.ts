@@ -39,6 +39,8 @@ export async function executeResolvedContext(context: ResolvedExecutorRunContext
     perspective: plan.items.map((item) => item.perspective.name).join(","),
     workspace: context.workspace,
     runtimePolicy: context.runtimePolicy,
+    modelPolicy: context.modelPolicy,
+    policyProvenance: context.policyProvenance,
   }));
 
   const executed = context.runtimePolicy.mode === "parallel" || context.runtimePolicy.mode === "dag"
@@ -63,6 +65,9 @@ export async function executeResolvedContext(context: ResolvedExecutorRunContext
     runId: options.runId,
     perspectiveResults: executed.perspectiveResults,
     events: executed.events,
+    modelPolicy: context.modelPolicy,
+    runtimePolicy: context.runtimePolicy,
+    policyProvenance: context.policyProvenance,
   });
 
   if (result.status === "completed") await runStore.writeResult(options.runId, resultToStoredRecord(result));

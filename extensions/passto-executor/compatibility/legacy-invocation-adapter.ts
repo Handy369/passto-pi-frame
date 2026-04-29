@@ -1,4 +1,4 @@
-import { assembleExecutorContext } from "../executor-core/assembly.ts";
+import { assembleExecutorContext, getExecutorTimeoutHeuristicsConfig } from "../executor-core/assembly.ts";
 import { executeResolvedContext, type ExecuteInvocationOptions } from "../executor-core/execute.ts";
 import { FileExecutorRunStore, getExecutorWorkspaceRoot } from "../executor-core/run-store.ts";
 import type { ExecutorInvocation } from "../executor-core/invocation.ts";
@@ -35,11 +35,6 @@ export interface LegacyExecuteRequestOptions extends Omit<ExecuteInvocationOptio
 
 export type CallerExecuteRequestOptions = LegacyExecuteRequestOptions;
 
-const SMALL_TIMEOUT_MS = 8 * 60 * 1000;
-const MEDIUM_TIMEOUT_MS = 15 * 60 * 1000;
-const LARGE_TIMEOUT_MS = 20 * 60 * 1000;
-const MAX_AUTO_TIMEOUT_MS = 25 * 60 * 1000;
-
 const COMPLEXITY_KEYWORDS = [
   "refactor",
   "scaffold",
@@ -53,8 +48,19 @@ const COMPLEXITY_KEYWORDS = [
   "commit",
 ];
 
+function getTimeoutHeuristics() {
+  const configured = getExecutorTimeoutHeuristicsConfig();
+  return {
+    smallTaskMs: configured.smallTaskMs ?? 8 * 60 * 1000,
+    mediumTaskMs: configured.mediumTaskMs ?? 15 * 60 * 1000,
+    largeTaskMs: configured.largeTaskMs ?? 20 * 60 * 1000,
+    maxAutoTimeoutMs: configured.maxAutoTimeoutMs ?? 25 * 60 * 1000,
+  };
+}
+
 function clampTimeoutMs(value: number) {
-  return Math.max(SMALL_TIMEOUT_MS, Math.min(MAX_AUTO_TIMEOUT_MS, Math.floor(value)));
+  const heuristics = getTimeoutHeuristics();
+  return Math.max(heuristics.smallTaskMs, Math.min(heuristics.maxAutoTimeoutMs, Math.floor(value)));
 }
 
 export function estimateExecutorTimeoutMs(request: ExecutorCallerRequest): number {
@@ -62,6 +68,7 @@ export function estimateExecutorTimeoutMs(request: ExecutorCallerRequest): numbe
     return clampTimeoutMs(request.timeoutMs);
   }
 
+  const heuristics = getTimeoutHeuristics();
   let score = 0;
   const todoCount = request.todolist?.length ?? 0;
   const outputCount = request.outputs?.length ?? 0;
@@ -79,9 +86,9 @@ export function estimateExecutorTimeoutMs(request: ExecutorCallerRequest): numbe
   if (request.mode && request.mode !== "single") score += 1;
   if (COMPLEXITY_KEYWORDS.some((keyword) => text.includes(keyword))) score += 2;
 
-  if (score >= 4) return clampTimeoutMs(LARGE_TIMEOUT_MS);
-  if (score >= 2) return clampTimeoutMs(MEDIUM_TIMEOUT_MS);
-  return clampTimeoutMs(SMALL_TIMEOUT_MS);
+  if (score >= 4) return clampTimeoutMs(heuristics.largeTaskMs);
+  if (score >= 2) return clampTimeoutMs(heuristics.mediumTaskMs);
+  return clampTimeoutMs(heuristics.smallTaskMs);
 }
 
 export function legacyRequestToInvocation(request: LegacySubagentLikeRequest): ExecutorInvocation {

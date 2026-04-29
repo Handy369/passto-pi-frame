@@ -1,4 +1,3 @@
-import { getContractLifecycleConfig } from "../../../../lib/passto-agent-runtime/config.ts";
 import type { ResolvedExecutorRunContext, ExecutorPerspectiveSpec } from "../context.ts";
 import type { RunExecutorChildParams } from "../runtime.ts";
 
@@ -62,9 +61,8 @@ function shouldUseImplementationOnlyBuilderProfile(input: BuildRunExecutorChildP
 
 export function buildRunExecutorChildParams(input: BuildRunExecutorChildParamsInput): RunExecutorChildParams {
   const perspectivePolicy = input.perspective.runtimeOptions;
-  const contractName = input.contract ?? input.perspective.contract?.name ?? input.context.contract?.name;
-  const contractLifecycle = getContractLifecycleConfig(contractName);
   const useImplementationOnlyBuilderProfile = shouldUseImplementationOnlyBuilderProfile(input);
+  const runtimePolicy = input.context.runtimePolicy;
 
   return {
     agent: input.perspective.agent ?? input.defaultAgent,
@@ -74,14 +72,10 @@ export function buildRunExecutorChildParams(input: BuildRunExecutorChildParamsIn
     extensions: undefined,
     appendSystemPrompt: useImplementationOnlyBuilderProfile ? IMPLEMENTATION_ONLY_BUILDER_APPEND_SYSTEM_PROMPT : undefined,
     executionPolicy: {
-      completionPolicy: contractLifecycle.completionPolicy ?? "process-exit",
-      idleTimeoutMs: perspectivePolicy?.idleTimeoutMs
-        ?? input.context.runtimePolicy.idleTimeoutMs
-        ?? contractLifecycle.idleTimeoutMs,
-      timeoutMs: perspectivePolicy?.timeoutMs ?? input.context.runtimePolicy.timeoutMs,
-      terminateGraceMs: perspectivePolicy?.terminateGraceMs
-        ?? input.context.runtimePolicy.terminateGraceMs
-        ?? contractLifecycle.terminateGraceMs,
+      completionPolicy: perspectivePolicy?.completionPolicy ?? runtimePolicy.completionPolicy ?? "process-exit",
+      idleTimeoutMs: perspectivePolicy?.idleTimeoutMs ?? runtimePolicy.idleTimeoutMs,
+      timeoutMs: perspectivePolicy?.timeoutMs ?? runtimePolicy.timeoutMs,
+      terminateGraceMs: perspectivePolicy?.terminateGraceMs ?? runtimePolicy.terminateGraceMs,
     },
   };
 }

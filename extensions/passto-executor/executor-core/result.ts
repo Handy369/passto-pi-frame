@@ -1,6 +1,7 @@
 import type { ContractVerificationResult } from "./contracts.ts";
 import type { ExecutorEvent } from "./events.ts";
 import type { ExecutorChildResult } from "./runtime.ts";
+import type { ExecutorModelPolicy, ExecutorPolicyProvenance, ExecutorRuntimePolicy } from "./context.ts";
 
 export interface ExecutorPerspectiveResult {
   perspective: string;
@@ -19,6 +20,9 @@ export interface ExecutorRunResult {
   usage: ExecutorChildResult["usage"];
   events: ExecutorEvent[];
   contract?: ContractVerificationResult;
+  modelPolicy?: ExecutorModelPolicy;
+  runtimePolicy?: ExecutorRuntimePolicy;
+  policyProvenance?: ExecutorPolicyProvenance;
   failure?: {
     reason?: string;
     errorMessage?: string;
@@ -69,6 +73,9 @@ export function buildExecutorRunResult(params: {
   childResult: ExecutorChildResult;
   events: ExecutorEvent[];
   contract?: ContractVerificationResult;
+  modelPolicy?: ExecutorModelPolicy;
+  runtimePolicy?: ExecutorRuntimePolicy;
+  policyProvenance?: ExecutorPolicyProvenance;
 }): ExecutorRunResult {
   return buildAggregatedExecutorRunResult({
     runId: params.runId,
@@ -81,6 +88,9 @@ export function buildAggregatedExecutorRunResult(params: {
   runId: string;
   perspectiveResults: ExecutorPerspectiveResult[];
   events: ExecutorEvent[];
+  modelPolicy?: ExecutorModelPolicy;
+  runtimePolicy?: ExecutorRuntimePolicy;
+  policyProvenance?: ExecutorPolicyProvenance;
 }): ExecutorRunResult {
   const failedPerspective = params.perspectiveResults.find((item) => item.status === "failed");
   const status = failedPerspective ? "failed" : "completed";
@@ -94,6 +104,9 @@ export function buildAggregatedExecutorRunResult(params: {
     usage: aggregateUsage(params.perspectiveResults),
     events: params.events,
     contract: params.perspectiveResults.length === 1 ? params.perspectiveResults[0]?.contract : undefined,
+    modelPolicy: params.modelPolicy,
+    runtimePolicy: params.runtimePolicy,
+    policyProvenance: params.policyProvenance,
     failure: failedPerspective
       ? {
           reason: failedPerspective.child?.stopReason,
