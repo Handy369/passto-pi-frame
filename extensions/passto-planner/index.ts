@@ -360,22 +360,22 @@ ${state.artifacts.map((a) => `  - ${a}`).join("\n") || "  （无）"}
 - 先读取 SKILL.md
 - references 是目录；不要直接读取整个 references 目录
 - 先确定当前步骤需要哪些 references/*.md，再逐个读取具体文件
-- 调用任何 research / review subagent 前，必须先读取 references/subagent-prompt-contracts.md
-- Research / Review 阶段必须直接使用官方 Agent(...) / get_subagent_result(...) / steer_subagent(...)
-- Execute Research 与 Review 都必须由主模型直接启动并管理 subagents
+- 调用任何 research / review 子任务前，必须先读取 references/subagent-prompt-contracts.md
+- Research / Review 属于 `passto-executor` 容器中 `stage=planner` 运行的 `passto-planner` 内部 orchestration
+- Execute Research 与 Review 都必须由主模型直接启动并管理顾问/子任务
+- 不把某个具体宿主工具名当作 workflow 本体契约
 - 本 workflow 的目标是输出 passto-plan.md，而不是立即实现代码
 - 不要跳过 Research Decision / Execute Research / 详细访谈 / Spec Synthesis
 - Research 固定分为 3 个方向：
   1. 本地代码仓库研究（若用户已确认无代码，则禁止启动）
   2. 关键环境 / 依赖 / 外部事实限制研究（固定执行）
   3. Web Search 最佳实践研究（固定执行）
-- Web Search research 必须按 topic split 成多个 web-search subagents，不能只起一个泛 web-search subagent
-- 每个 web topic 对应一个 Agent(subagent_type="Explore")
-- Web Search subagents 最多同时并行 2 个，超过 2 个 topic 时分批执行
-- 每个 Web Search subagent 必须设置 run_in_background: true
-- 每个 Web Search subagent 只使用 turn 阀门：max_turns = 15
-- 当 web-search subagent 到达第 13 turn 时，必须调用 steer_subagent(...)，要求其立即总结当前发现、不要继续扩展搜索范围，并在剩余 turn 内完成输出
-- 每个 research subagent 完成自己的结果后必须立即停止，禁止继续推进到后续步骤
+- Web Search research 必须按 topic split 成多个 web research 子任务，不能只起一个泛 web-search 子任务
+- 每个 web topic 对应一个独立 research 子任务
+- Web Search 子任务最多同时并行 2 个，超过 2 个 topic 时分批执行
+- 每个 Web Search 子任务都必须在初始 prompt 中显式限定 topic 边界、输出格式、停止条件与“不写文件”要求
+- 若当前实现不支持 mid-run steering，则必须在初始 prompt 中预先要求子任务在有限轮次内收敛并完成摘要
+- 每个 research 子任务完成自己的结果后必须立即停止，禁止继续推进到后续步骤
 - product mode 不能只靠 inferred 决定，必须在第一轮访谈中显式询问用户确认
 - environment / dependency / external facts 必须在 research decision 中显式处理
 - 详细访谈必须使用 references/interview-protocol.md，且优先使用 passto_planner_interview_round(...)
