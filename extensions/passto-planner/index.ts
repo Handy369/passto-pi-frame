@@ -2,17 +2,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
-import { runPlannerTask } from "./tools/run-planner-task.ts";
-import {
-  closePlannerSession,
-  createPlannerSession,
-  loadPlannerSession,
-  removePlannerSession,
-  savePlannerSession,
-  type PlannerSessionState,
-} from "./planner/session.ts";
 
-type PlannerState = PlannerSessionState;
+interface PlannerState {
+  target: string;
+  planningDir: string;
+  currentStep: number;
+  startedAt: string;
+  artifacts: string[];
+}
 
 const STEP_NAMES: Record<number, string> = {
   1: "校验目标输入",
@@ -261,15 +258,17 @@ function statePath(planningDir: string): string {
 }
 
 function loadState(planningDir: string): PlannerState | null {
-  return loadPlannerSession(planningDir);
+  const content = tryRead(statePath(planningDir));
+  return content ? JSON.parse(content) : null;
 }
 
-function saveState(_planningDir: string, state: PlannerState): void {
-  savePlannerSession(state);
+function saveState(planningDir: string, state: PlannerState): void {
+  writeJson(statePath(planningDir), state);
 }
 
 function removeState(planningDir: string): void {
-  removePlannerSession(planningDir);
+  const sp = statePath(planningDir);
+  if (fs.existsSync(sp)) fs.unlinkSync(sp);
 }
 
 function scanArtifacts(planningDir: string): string[] {
@@ -360,22 +359,22 @@ ${state.artifacts.map((a) => `  - ${a}`).join("\n") || "  （无）"}
 - 先读取 SKILL.md
 - references 是目录；不要直接读取整个 references 目录
 - 先确定当前步骤需要哪些 references/*.md，再逐个读取具体文件
-- 调用任何 research / review 子任务前，必须先读取 references/subagent-prompt-contracts.md
-- Research / Review 属于 'passto-executor' 容器中 'stage=planner' 运行的 'passto-planner' 内部 orchestration
-- Execute Research 与 Review 都必须由主模型直接启动并管理顾问/子任务
-- 不把某个具体宿主工具名当作 workflow 本体契约
+- 调用任何 research / review subagent 前，必须先读取 references/subagent-prompt-contracts.md
+- Research / Review 阶段必须直接使用官方 Agent(...) / get_subagent_result(...) / steer_subagent(...)
+- Execute Research 与 Review 都必须由主模型直接启动并管理 subagents
 - 本 workflow 的目标是输出 passto-plan.md，而不是立即实现代码
 - 不要跳过 Research Decision / Execute Research / 详细访谈 / Spec Synthesis
 - Research 固定分为 3 个方向：
   1. 本地代码仓库研究（若用户已确认无代码，则禁止启动）
   2. 关键环境 / 依赖 / 外部事实限制研究（固定执行）
   3. Web Search 最佳实践研究（固定执行）
-- Web Search research 必须按 topic split 成多个 web research 子任务，不能只起一个泛 web-search 子任务
-- 每个 web topic 对应一个独立 research 子任务
-- Web Search 子任务最多同时并行 2 个，超过 2 个 topic 时分批执行
-- 每个 Web Search 子任务都必须在初始 prompt 中显式限定 topic 边界、输出格式、停止条件与“不写文件”要求
-- 若当前实现不支持 mid-run steering，则必须在初始 prompt 中预先要求子任务在有限轮次内收敛并完成摘要
-- 每个 research 子任务完成自己的结果后必须立即停止，禁止继续推进到后续步骤
+- Web Search research 必须按 topic split 成多个 web-search subagents，不能只起一个泛 web-search subagent
+- 每个 web topic 对应一个 Agent(subagent_type="Explore")
+- Web Search subagents 最多同时并行 2 个，超过 2 个 topic 时分批执行
+- 每个 Web Search subagent 必须设置 run_in_background: true
+- 每个 Web Search subagent 只使用 turn 阀门：max_turns = 15
+- 当 web-search subagent 到达第 13 turn 时，必须调用 steer_subagent(...)，要求其立即总结当前发现、不要继续扩展搜索范围，并在剩余 turn 内完成输出
+- 每个 research subagent 完成自己的结果后必须立即停止，禁止继续推进到后续步骤
 - product mode 不能只靠 inferred 决定，必须在第一轮访谈中显式询问用户确认
 - environment / dependency / external facts 必须在 research decision 中显式处理
 - 详细访谈必须使用 references/interview-protocol.md，且优先使用 passto_planner_interview_round(...)
@@ -441,7 +440,7 @@ export default function (pi: ExtensionAPI) {
       const planningDir = targetToDir(ctx, target);
       const currentStep = detectResumePoint(planningDir);
       const artifacts = scanArtifacts(planningDir);
-      const state: PlannerState = createPlannerSession({ target, planningDir, currentStep, totalSteps: TOTAL_STEPS, artifacts });
+      const state: PlannerState = { target, planningDir, currentStep, startedAt: new Date().toISOString(), artifacts };
       saveState(planningDir, state);
       activePlanningDirs.add(planningDir);
       updateUI(ctx, planningDir);
@@ -484,11 +483,11 @@ export default function (pi: ExtensionAPI) {
       const planningDir = targetToDir(ctx, params.target);
       const currentStep = detectResumePoint(planningDir);
       const artifacts = scanArtifacts(planningDir);
-      const state: PlannerState = createPlannerSession({ target: params.target, planningDir, currentStep, totalSteps: TOTAL_STEPS, artifacts });
+      const state: PlannerState = { target: params.target, planningDir, currentStep, startedAt: new Date().toISOString(), artifacts };
       saveState(planningDir, state);
       activePlanningDirs.add(planningDir);
       updateUI(ctx, planningDir);
-      return { content: [{ type: "text", text: `已启动 passto-planner\n目标：${params.target}\n目录：${planningDir}\n会话：${state.sessionId}\n运行：${state.runId}\n从第 ${currentStep}/${TOTAL_STEPS} 步开始` }], details: { planningDir, currentStep, artifacts, sessionId: state.sessionId, runId: state.runId, status: state.status } };
+      return { content: [{ type: "text", text: `已启动 passto-planner\n目标：${params.target}\n目录：${planningDir}\n从第 ${currentStep}/${TOTAL_STEPS} 步开始` }], details: { planningDir, currentStep, artifacts } };
     },
   });
 
@@ -506,11 +505,10 @@ export default function (pi: ExtensionAPI) {
       if (state.currentStep >= TOTAL_STEPS) return { content: [{ type: "text", text: "所有步骤已完成。" }], details: { done: true } };
       state.currentStep += 1;
       state.artifacts = scanArtifacts(params.planningDir);
-      state.history.push({ step: state.currentStep, at: new Date().toISOString(), action: "next", summary: params.stepSummary });
       saveState(params.planningDir, state);
       updateUI(ctx, params.planningDir);
       pi.sendUserMessage(`${buildPrompt(state, state.currentStep)}\n\n上一步完成：${params.stepSummary ?? "✓"}`, { deliverAs: "steer" });
-      return { content: [{ type: "text", text: `已推进到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep, sessionId: state.sessionId, runId: state.runId, status: state.status } };
+      return { content: [{ type: "text", text: `已推进到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep } };
     },
   });
 
@@ -529,11 +527,10 @@ export default function (pi: ExtensionAPI) {
       const nextStep = Math.max(2, Math.min(requested, state.currentStep - 1));
       state.currentStep = nextStep;
       state.artifacts = scanArtifacts(params.planningDir);
-      state.history.push({ step: state.currentStep, at: new Date().toISOString(), action: "back" });
       saveState(params.planningDir, state);
       updateUI(ctx, params.planningDir);
       pi.sendUserMessage(`${buildPrompt(state, state.currentStep)}\n\n已回退到第 ${state.currentStep} 步，请在当前步骤中修改并重新执行。`, { deliverAs: "steer" });
-      return { content: [{ type: "text", text: `已回退到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep, sessionId: state.sessionId, runId: state.runId, status: state.status } };
+      return { content: [{ type: "text", text: `已回退到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep } };
     },
   });
 
@@ -545,10 +542,8 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params) {
       const state = loadState(params.planningDir);
       if (!state) return { content: [{ type: "text", text: "未找到活跃状态。" }], details: {} };
-      state.history.push({ step: state.currentStep, at: new Date().toISOString(), action: "status" });
-      saveState(params.planningDir, state);
       return {
-        content: [{ type: "text", text: `目标：${state.target}\n目录：${state.planningDir}\n会话：${state.sessionId}\n运行：${state.runId}\n状态：${state.status}\n步骤：${state.currentStep}/${state.totalSteps} — ${STEP_NAMES[state.currentStep] ?? "?"}\n产物：${state.artifacts.join(", ") || "（无）"}` }],
+        content: [{ type: "text", text: `目标：${state.target}\n目录：${state.planningDir}\n步骤：${state.currentStep}/${TOTAL_STEPS} — ${STEP_NAMES[state.currentStep] ?? "?"}\n产物：${state.artifacts.join(", ") || "（无）"}` }],
         details: state,
       };
     },
@@ -898,45 +893,11 @@ export default function (pi: ExtensionAPI) {
     description: "完成 passto-planner 会话并清理状态。",
     parameters: Type.Object({ planningDir: Type.String({ description: "Absolute path to the planning directory" }) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
-      const state = closePlannerSession(params.planningDir, "completed");
+      const state = loadState(params.planningDir);
       removeState(params.planningDir);
       activePlanningDirs.delete(params.planningDir);
       updateUI(ctx, params.planningDir);
-      return { content: [{ type: "text", text: `passto-planner 已完成。产物目录：${params.planningDir}` }], details: { planningDir: params.planningDir, artifacts: state?.artifacts ?? scanArtifacts(params.planningDir), sessionId: state?.sessionId, runId: state?.runId, status: state?.status ?? "completed" } };
-    },
-  });
-
-  pi.registerTool({
-    name: "run_planner_task",
-    label: "Run Planner Task",
-    description: "Run the Phase 1A passto-planner scaffold entry point and return planner result plus handoff data.",
-    parameters: Type.Object({
-      goal: Type.String({ description: "Planner goal" }),
-      cwd: Type.String({ description: "Working directory for the planner task" }),
-      constraints: Type.Optional(Type.Array(Type.String({ description: "Planner constraint" }))),
-      expectedOutputs: Type.Optional(Type.Array(Type.String({ description: "Expected planner output" }))),
-      todolist: Type.Optional(Type.Array(Type.String({ description: "Planner task step" }))),
-      stage: Type.Optional(Type.String({ description: "Planner stage label" })),
-    }),
-    async execute(_id, params) {
-      const response = await runPlannerTask(params);
-      return {
-        content: [{ type: "text", text: response.result.resultSummary }],
-        details: response,
-      };
+      return { content: [{ type: "text", text: `passto-planner 已完成。产物目录：${params.planningDir}` }], details: { planningDir: params.planningDir, artifacts: state?.artifacts ?? scanArtifacts(params.planningDir) } };
     },
   });
 }
-
-// Phase 1A: Planner core scaffold exports
-export * from "./planner/contracts.ts";
-export * from "./planner/planning-types.ts";
-export * from "./planner/input.ts";
-export * from "./planner/state.ts";
-export * from "./planner/result.ts";
-export * from "./planner/handoff.ts";
-export * from "./planner/workflow.ts";
-export * from "./planner/runner.ts";
-export * from "./planner/session.ts";
-export * from "./planner/nested-execution.ts";
-export * from "./tools/run-planner-task.ts";

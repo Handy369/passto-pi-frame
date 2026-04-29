@@ -10,13 +10,11 @@
 执行：
 1. 解析 `SECTION_MANIFEST`
 2. 检查缺失的 `section-*.md`
-3. 同一轮为每个缺失 section 启动一个独立分段子任务
+3. 同一轮为每个缺失 section 启动一个 `Agent(...)`
 4. 等待全部完成
 
 规则：
-- 这是 `passto-executor` 容器中 `stage=planner` 运行的 `passto-planner` 内部分段编写 orchestration
-- 主 planner 负责启动、汇总与落盘分段结果
-- 分段子任务不重写已有 section
+- 不重写已有 section
 - 只补齐缺失 section
 - 每个 section 文件必须完全自包含
 

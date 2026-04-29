@@ -125,25 +125,23 @@ passto_planner_multiselect({
 
 先读取 `references/subagent-prompt-contracts.md`。
 
-这是 `passto-executor` 容器中 `stage=planner` 运行的 `passto-planner` 内部 research orchestration。
+research 阶段直接使用：
+- `Agent(...)`
+- `get_subagent_result(...)`
+- `steer_subagent(...)`
 
 Research 方向：
-- 代码仓库研究：仅在用户明确确认存在本地代码仓库时启动
-- 关键环境 / 依赖 / 外部事实限制研究：固定执行
-- Web Search：每个 topic 一个独立 research subtask
-
-执行规则：
-- 由 `passto-planner` 主体负责启动、管理、汇总 research subtasks
-- research subtasks 只返回结果，不写文件，不推进 workflow
-- 主体统一把研究结果写入 `<planning_dir>/passto-research.md`
-- 具体子任务运行由 frame 允许运行的 agent-runtime 机制承载，不把某个具体宿主工具名当作 workflow 契约本体
+- 代码仓库研究：`Agent(subagent_type="Explore")`
+- 关键环境 / 依赖 / 外部事实限制研究：`Agent(subagent_type="Explore")`
+- Web Search：每个 topic 一个 `Agent(subagent_type="Explore")`
 
 约束：
-- Web Search 必须按 topic split
-- 最多并行 2 个 web research subtasks
-- 每个 web research subtask 必须在初始 prompt 中显式限定 topic 边界、输出格式、停止条件与“不写文件”要求
-- 若当前实现不支持 mid-run steering，则必须在初始 prompt 中预先要求子任务在有限轮次内收敛并完成摘要
-- 所有 research subtasks 完成自己的结果后必须立即停止，禁止继续推进到后续步骤
+- Web Search 按 topic split
+- 最多并行 2 个 web subagents
+- 每个 web subagent：`run_in_background: true`
+- 每个 web subagent：`max_turns: 15`
+- 第 13 turn：`steer_subagent(...)`
+- subagents 只返回结果，不写文件
 
 输出：
 
@@ -198,19 +196,13 @@ passto_planner_interview_round(...)
 - `references/subagent-prompt-contracts.md`
 - `references/review-enhancement.md`
 
-这是 `passto-executor` 容器中 `stage=planner` 运行的 `passto-planner` 内部 review orchestration。
-
-执行规则：
-- 由 `passto-planner` 主体并行启动 2 个 review subtasks
-- review subtasks 只负责审计，不负责整合、改写、写文件或推进 workflow
-- 主体负责收集 review 结果并写入：
-  - `<planning_dir>/reviews/gpt-5.4-review.md`
-  - `<planning_dir>/reviews/claude-opus-4-6-review.md`
-- 具体子任务运行由 frame 允许运行的 agent-runtime 机制承载，不把某个具体宿主工具名当作 workflow 契约本体
-
-建议 reviewer 配置：
+启动 2 个并行 review subagents：
 - `PASSTOAI-TW/AUTH/gpt-5.4`
 - `PASSTOAI-TW/AUTH/claude-opus-4-6`
+
+写入：
+- `<planning_dir>/reviews/gpt-5.4-review.md`
+- `<planning_dir>/reviews/claude-opus-4-6-review.md`
 
 ### 10. 整合外部反馈
 

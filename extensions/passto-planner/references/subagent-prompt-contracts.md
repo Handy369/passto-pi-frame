@@ -1,22 +1,17 @@
 # Subagent Prompt Contracts
 
-本文件定义 `passto-planner` 中所有顾问/子任务调用必须遵守的固定 prompt contract。
-
-这些子任务属于：
-- `passto-executor` 容器中的 `stage=planner`
-- `passto-planner` 执行器内部 orchestration
+本文件定义 `passto-planner` 中所有 subagent 调用必须遵守的固定 prompt contract。
 
 目标：
-- 防止子任务自行越界推进 workflow
-- 防止子任务擅自写文件或进入后续步骤
-- 统一 research / review 类子任务的输入、输出、禁止事项、停止条件
-- 避免把某个具体宿主工具名上升为 workflow 本体契约
+- 防止 subagent 自行越界推进 workflow
+- 防止 subagent 擅自写文件或进入后续步骤
+- 统一 research / review 类 subagent 的输入、输出、禁止事项、停止条件
 
 ---
 
 # 一、总原则
 
-每次调用顾问/子任务时，prompt 必须显式包含以下 4 类信息：
+每次调用 subagent 时，prompt 必须显式包含以下 4 类信息：
 
 1. **任务边界**：你只负责什么
 2. **输入清单**：你可以使用什么材料
@@ -25,16 +20,11 @@
 
 禁止只依赖主 agent 上下文“默认理解”这些边界。
 
-实现说明：
-- 当前 workflow 契约描述的是 `passto-planner` 内部 orchestration 行为
-- 具体子任务由 frame 允许运行的 agent-runtime 机制承载
-- 若当前实现不支持 mid-run steering，则必须在初始 prompt 中提前写清 scope、收敛要求、输出格式与停止条件
-
 ---
 
 # 二、统一固定结尾约束
 
-以下约束应作为所有顾问/子任务 prompt 的固定结尾块：
+以下约束应作为所有 subagent prompt 的固定结尾块：
 
 ```text
 硬约束：
@@ -47,13 +37,13 @@
 - 完成当前结果后立即停止。
 ```
 
-如果某个子任务本身就是 review 子任务，则把“不做 interview / spec synthesis / pre-plan / passto-plan 生成”保留，把“不要做 review”删掉即可。
+如果某个 subagent 本身就是 review subagent，则把“不做 interview / spec synthesis / pre-plan / passto-plan 生成”保留，把“不要做 review”删掉即可。
 
 ---
 
-# 三、Research 子任务 Contracts
+# 三、Research Subagent Contracts
 
-## 3.1 子任务 1：本地代码仓库研究
+## 3.1 Subagent 1：本地代码仓库研究
 
 ### 适用条件
 - 只有在用户明确确认存在本地代码仓库时才允许启动
@@ -98,7 +88,7 @@
 
 ---
 
-## 3.2 子任务 2：关键环境 / 依赖 / 外部事实限制研究
+## 3.2 Subagent 2：关键环境 / 依赖 / 外部事实限制研究
 
 ### 适用条件
 - 固定需要执行
@@ -144,7 +134,7 @@
 
 ---
 
-## 3.3 子任务 3：Web Search 最佳实践研究
+## 3.3 Subagent 3：Web Search 最佳实践研究
 
 ### 适用条件
 - 固定需要执行
@@ -187,22 +177,11 @@
 - 完成当前结果后立即停止。
 ```
 
-### Web Search topic-splitting 附加约束
-
-对 Web Search research，`passto-planner` 主体必须：
-- 按 topic split 成多个独立子任务
-- 一次最多并行 2 个 web research 子任务
-- 每个 topic 的 prompt 都必须写清：只研究该 topic，不扩展搜索范围
-- 明确要求：在有限轮次内收敛，优先总结当前发现，而不是继续扩展搜索
-- 子任务完成自己的结果后立即停止
-
-如果当前实现缺少显式 turn steering 能力，不应跳过这些约束，而应通过初始 prompt contract 预先实现范围收口。
-
 ---
 
-# 四、Review 子任务 Contract
+# 四、Review Subagent Contract
 
-## 4.1 方案审计子任务
+## 4.1 方案审计 subagent
 
 ### 适用条件
 - 在 plan 审计阶段使用
@@ -250,25 +229,25 @@
 
 ---
 
-# 五、主 planner 在调用时的责任
+# 五、主 agent 在调用时的责任
 
-主 planner 必须负责：
-- 判断哪个顾问/子任务应启动
+主 agent 必须负责：
+- 判断哪个 subagent 应启动
 - 把输入材料整理清楚后再调用
-- 对子任务返回结果做统一整合
+- 对 subagent 返回结果做统一整合
 - 由主上下文统一写文件
 
-子任务不负责：
+subagent 不负责：
 - 推进 workflow
 - 写产物文件
 - 决定进入下一步
-- 替主 planner 做 synthesis / final plan
+- 替主 agent 做 synthesis / final plan
 
 ---
 
 # 六、最小检查清单
 
-每次调用顾问/子任务前，主 planner 必须检查：
+每次调用 subagent 前，主 agent 必须检查：
 
 - [ ] 是否明确写了“你的唯一任务”
 - [ ] 是否明确列出输入清单
@@ -277,4 +256,4 @@
 - [ ] 是否明确写了“完成后立即停止”
 - [ ] 是否明确说明“不要写文件”
 
-如果上述任一项缺失，子任务 prompt contract 不完整。
+如果上述任一项缺失，subagent prompt contract 不完整。
