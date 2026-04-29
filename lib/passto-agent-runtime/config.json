@@ -26,8 +26,8 @@
       "preferredThinking": "low"
     },
     "modelPolicy": {
-      "defaultModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
-      "fallbackModels": [],
+      "defaultModel": "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+      "fallbackModels": ["PASSTOAI-TW/HubTo-TW/gpt-5.4"],
       "roleDefaults": {
         "builder": {
           "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
