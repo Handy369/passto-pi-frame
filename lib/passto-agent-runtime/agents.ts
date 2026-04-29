@@ -14,6 +14,14 @@ function normalizeStringArray(value: string | undefined): string[] | undefined {
   return items.length > 0 ? items : undefined;
 }
 
+function parseBoolean(value: string | undefined): boolean | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(normalized)) return true;
+  if (["false", "0", "no", "off"].includes(normalized)) return false;
+  return undefined;
+}
+
 export function resolveAgentProfilePath(agent: string | undefined): string | undefined {
   if (!agent) return undefined;
   if (looksLikePath(agent)) return path.isAbsolute(agent) ? agent : path.resolve(process.cwd(), agent);
@@ -42,6 +50,7 @@ export function parseAgentProfileMarkdown(filePath: string): AgentProfile {
     tools: normalizeStringArray(meta.tools),
     skills: normalizeStringArray(meta.skills),
     extensions: normalizeStringArray(meta.extensions),
+    inheritParentExtensions: parseBoolean(meta.inheritParentExtensions),
     sessionMode: meta.sessionMode === "fork" ? "fork" : meta.sessionMode === "spawn" ? "spawn" : undefined,
     timeoutMs: meta.timeoutMs ? Number(meta.timeoutMs) : undefined,
     completionPolicy: meta.completionPolicy === "agent-end" ? "agent-end" : meta.completionPolicy === "process-exit" ? "process-exit" : undefined,
@@ -71,6 +80,7 @@ export function applyAgentProfileDefaults(options: PiChildRunOptions, profile: A
     tools: options.tools ?? profile.tools,
     skills: options.skills ?? profile.skills,
     extensions: options.extensions ?? profile.extensions,
+    inheritParentExtensions: options.inheritParentExtensions ?? profile.inheritParentExtensions,
     sessionMode: options.sessionMode ?? profile.sessionMode,
     timeoutMs: options.timeoutMs ?? profile.timeoutMs,
     completionPolicy: options.completionPolicy ?? profile.completionPolicy,

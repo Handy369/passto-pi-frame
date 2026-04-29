@@ -148,7 +148,7 @@ const result = await runSubagent({
 
 含义：
 - `agent: "reviewer"` 会加载 `agents/reviewer.md`
-- frontmatter 中的 `model / thinking / tools / sessionMode / timeoutMs / completionPolicy / idleTimeoutMs / terminateGraceMs / maxDepth` 会作为默认值
+- frontmatter 中的 `model / thinking / tools / sessionMode / timeoutMs / completionPolicy / idleTimeoutMs / terminateGraceMs / maxDepth / inheritParentExtensions` 会作为默认值
 - 若调用方显式再传 `model / tools / timeoutMs` 等，则调用方参数优先
 - agent 正文会作为基础 `systemPrompt`
 - `appendSystemPrompt` 会追加在 agent 正文后面，而不是覆盖它
@@ -157,6 +157,8 @@ const result = await runSubagent({
 - review 场景优先用 `agent: "reviewer"`
 - 通用场景可用 `agent: "default"`
 - Ralph loop 场景可用 `agent: "ralph-executor"`
+
+说明：当 child 需要精确控制自己的 extension surface 时，可设置 `inheritParentExtensions: false`，避免父进程 `--extension` 参数被继续透传到 child。
 
 说明：若未显式传 `completionPolicy / idleTimeoutMs / terminateGraceMs`，runtime 会先读取 `agent/lib/passto-agent-runtime/config.json` 的 `subagent.defaults`，只有在配置缺失时才使用极小技术 fallback。
 

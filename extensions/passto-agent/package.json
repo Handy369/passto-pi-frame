@@ -1,0 +1,25 @@
+{
+  "name": "@handy/passto-agent",
+  "version": "0.1.0",
+  "description": "TUI-first entry layer that turns user input into passto-executor task documents.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "passto-agent",
+    "executor",
+    "task-doc"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "pi": {
+    "extensions": [
+      "./pi-extension.ts"
+    ]
+  }
+}

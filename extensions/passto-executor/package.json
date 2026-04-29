@@ -1,0 +1,23 @@
+{
+  "name": "@handy/passto-executor",
+  "version": "0.1.0",
+  "description": "Phase 3 execution container runtime for Pi with bounded orchestration, sandbox policy controls, persistence inspection, and compatibility adapters.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts",
+    "./executor-core": "./executor-core/index.ts",
+    "./compatibility": "./compatibility/index.ts"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "executor",
+    "orchestration",
+    "sandbox",
+    "compatibility"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
+}

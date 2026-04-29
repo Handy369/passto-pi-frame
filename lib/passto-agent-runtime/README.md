@@ -234,6 +234,9 @@
 - `--extension`, `-e`
 - `--no-extensions`, `-ne`
 
+默认会继承这些父进程 extension 参数。
+如果子任务需要一个精确且隔离的 extension surface，可设置 `inheritParentExtensions: false`，这样 child 只使用自身显式配置的 extensions / `noExtensions` 策略。
+
 #### alwaysProxy
 - `--skill`
 - `--prompt-template`

@@ -3,8 +3,6 @@ name: ralph-executor
 description: Execute multi-iteration development tasks through the Ralph Wiggum loop with real tool-backed iteration control.
 model: PASSTOAI-TW/HubTo-TW/qwen3.6-plus
 thinking: low
-tools: read,bash,edit,write
-extensions: /Users/handy/.pi/agent/extensions/ralph-wiggum/index.ts
 sessionMode: spawn
 timeoutMs: 900000
 maxDepth: 1

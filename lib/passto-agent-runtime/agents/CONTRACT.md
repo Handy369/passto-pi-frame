@@ -98,6 +98,13 @@ maxDepth: 1
   - `extensions: /abs/path/ext-a.ts,/abs/path/ext-b.ts`
 - 空值：等价于未设置
 
+#### `inheritParentExtensions`
+- 类型：`boolean string`
+- 作用：是否继承父进程 CLI 中的 `--extension / --no-extensions`
+- 示例：
+  - `inheritParentExtensions: false`
+- 典型场景：子任务需要一个精确、隔离、不受父进程 extension 污染的工具面
+
 #### `sessionMode`
 - 类型：`string`
 - 允许值：

@@ -1,0 +1,13 @@
+{
+  "goal": "Create a short implementation note",
+  "task": "Write a short implementation note into the workspace describing the current builder bootstrap status.",
+  "cwd": "/tmp/project",
+  "expectedOutputs": [
+    "A short implementation note file"
+  ],
+  "checklist": [
+    { "id": "note", "text": "Create the note artifact" }
+  ],
+  "sandboxStrategy": "temp-copy",
+  "executionEngine": "ralph-loop"
+}

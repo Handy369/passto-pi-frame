@@ -30,6 +30,7 @@ import {
 } from "../../../lib/passto-agent-runtime/guards.ts";
 import { getContractLifecycleConfig } from "../../../lib/passto-agent-runtime/config.ts";
 import { runSubagent } from "../../../lib/passto-agent-runtime/index.ts";
+import { loadAgentProfile } from "../../../lib/passto-agent-runtime/agents.ts";
 
 const RUNTIME_CONFIG_PATH = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -278,6 +279,13 @@ test("getDisplayItems inserts matching tool results after tool calls", () => {
       { type: "toolResult", toolName: "bash", text: "/tmp/project" },
     ],
   );
+});
+
+test("ralph-executor profile does not whitelist away Ralph tools", () => {
+  const profile = loadAgentProfile("ralph-executor");
+  assert.ok(profile);
+  assert.equal(profile?.tools, undefined);
+  assert.equal(profile?.extensions, undefined);
 });
 
 test("parseExecutionContract accepts ralph-loop", () => {

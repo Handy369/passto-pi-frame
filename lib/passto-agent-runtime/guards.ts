@@ -3,7 +3,7 @@ import { SUBAGENT_DEPTH_ENV, SUBAGENT_MAX_DEPTH_ENV, SUBAGENT_PREVENT_CYCLES_ENV
 import { getDefaultLifecycleConfig } from "./config.ts";
 import type { CompletionPolicy, PiChildRunOptions } from "./types.ts";
 
-export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+export const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const TECHNICAL_FALLBACK_IDLE_TIMEOUT_MS = 15 * 1000;
 const TECHNICAL_FALLBACK_TERMINATE_GRACE_MS = 5 * 1000;
 export const DEFAULT_MAX_DEPTH = 1;

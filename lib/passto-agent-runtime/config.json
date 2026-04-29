@@ -12,5 +12,73 @@
         "terminateGraceMs": 10000
       }
     }
+  },
+  "executor": {
+    "defaults": {
+      "mode": "single",
+      "completionPolicy": "process-exit",
+      "idleTimeoutMs": 15000,
+      "timeoutMs": 900000,
+      "terminateGraceMs": 5000,
+      "maxConcurrency": 1,
+      "sandboxCleanupPolicy": "on-success",
+      "preserveSandboxOnFailure": true,
+      "preferredThinking": "low"
+    },
+    "modelPolicy": {
+      "defaultModel": "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+      "fallbackModels": ["PASSTOAI-TW/HubTo-TW/gpt-5.4"],
+      "roleDefaults": {
+        "builder": {
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
+          "preferredThinking": "low",
+          "fallbackModels": []
+        },
+        "reviewer": {
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
+          "preferredThinking": "medium",
+          "fallbackModels": []
+        },
+        "planner": {
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
+          "preferredThinking": "medium",
+          "fallbackModels": []
+        },
+        "implementation-only": {
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
+          "preferredThinking": "high",
+          "fallbackModels": []
+        }
+      }
+    },
+    "timeouts": {
+      "smallTaskMs": 480000,
+      "mediumTaskMs": 900000,
+      "largeTaskMs": 1200000,
+      "maxAutoTimeoutMs": 1500000
+    },
+    "contracts": {
+      "ralph-loop": {
+        "completionPolicy": "process-exit",
+        "idleTimeoutMs": 60000,
+        "timeoutMs": 1200000,
+        "terminateGraceMs": 10000,
+        "preferredThinking": "high"
+      }
+    },
+    "stages": {
+      "builder": {
+        "preferredThinking": "low",
+        "timeoutMs": 1200000
+      },
+      "reviewer": {
+        "preferredThinking": "medium",
+        "timeoutMs": 600000
+      },
+      "planner": {
+        "preferredThinking": "high",
+        "timeoutMs": 900000
+      }
+    }
   }
 }
