@@ -23,29 +23,29 @@
       "maxConcurrency": 1,
       "sandboxCleanupPolicy": "on-success",
       "preserveSandboxOnFailure": true,
-      "preferredThinking": "medium"
+      "preferredThinking": "low"
     },
     "modelPolicy": {
-      "defaultModel": null,
+      "defaultModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
       "fallbackModels": [],
       "roleDefaults": {
         "builder": {
-          "preferredModel": null,
-          "preferredThinking": "high",
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
+          "preferredThinking": "low",
           "fallbackModels": []
         },
         "reviewer": {
-          "preferredModel": null,
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
           "preferredThinking": "medium",
           "fallbackModels": []
         },
         "planner": {
-          "preferredModel": null,
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
           "preferredThinking": "medium",
           "fallbackModels": []
         },
         "implementation-only": {
-          "preferredModel": null,
+          "preferredModel": "PASSTOAI-TW/HubTo-TW/gpt-5.4",
           "preferredThinking": "high",
           "fallbackModels": []
         }
@@ -68,7 +68,7 @@
     },
     "stages": {
       "builder": {
-        "preferredThinking": "high",
+        "preferredThinking": "low",
         "timeoutMs": 1200000
       },
       "reviewer": {
@@ -76,7 +76,7 @@
         "timeoutMs": 600000
       },
       "planner": {
-        "preferredThinking": "medium",
+        "preferredThinking": "high",
         "timeoutMs": 900000
       }
     }
