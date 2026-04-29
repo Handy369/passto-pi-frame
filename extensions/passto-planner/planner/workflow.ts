@@ -17,6 +17,8 @@ import { createPlannerSession, savePlannerSession } from "./session.ts";
 import { runStep4Research } from "./research.ts";
 import { runStep9Review } from "./review.ts";
 import { runStep10Integration } from "./integration.ts";
+import { runStep11ReviewGate } from "./review-gate.ts";
+import { runStep12FinalPlan } from "./final-plan.ts";
 
 export interface PlannerWorkflowOutput {
   result: PlannerResult;
@@ -230,9 +232,104 @@ export async function runPlannerWorkflow(
     }
   }
 
-  // ── Nested execution (non-Step 4/9/10 path) ───────────────────
+  // ── Step 11: Real review gate path ────────────────────────────────
+  // Triggered when currentStep === 11 or metadata.reviewGateMode is set
+  // AND a planningDir is available.
+  const isStep11 = currentStep === 11;
+  const reviewGateMode = input.metadata.reviewGateMode === true || input.metadata.step11ReviewGate === true;
+  let ranRealReviewGate = false;
+  if ((isStep11 || reviewGateMode) && planningDir) {
+    try {
+      const reviewGateOutput = await runStep11ReviewGate({
+        runId,
+        planningDir,
+        goal: input.goal,
+        target: typeof target === "string" ? target : undefined,
+      });
+
+      producedArtifacts.push({
+        type: "review-gate",
+        path: reviewGateOutput.filePath,
+        summary: `Step 11 review gate completed: ${reviewGateOutput.summary}`,
+        metadata: {
+          reviewGateReady: reviewGateOutput.reviewGateReady,
+          artifactsFound: reviewGateOutput.availableArtifacts.filter((a) => a.exists).length,
+          unresolvedCount: reviewGateOutput.unresolvedItems.length,
+        },
+      });
+
+      if (session) {
+        session.artifacts.push("review-gate-summary");
+        session.history.push({
+          step: session.currentStep,
+          at: new Date().toISOString(),
+          action: "next",
+          summary: `Step 11 review gate completed: ${reviewGateOutput.summary}`,
+        });
+        savePlannerSession(session);
+      }
+
+      ranRealReviewGate = true;
+    } catch (err) {
+      producedArtifacts.push({
+        type: "review-gate-error",
+        summary: `Step 11 review gate failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { error: true },
+      });
+      remainingWork.push("Re-run Step 11 review gate after resolving errors");
+    }
+  }
+
+  // ── Step 12: Real final plan generation path ──────────────────────
+  // Triggered when currentStep === 12 or metadata.finalPlanMode is set
+  // AND a planningDir is available.
+  const isStep12 = currentStep === 12;
+  const finalPlanMode = input.metadata.finalPlanMode === true || input.metadata.step12FinalPlan === true;
+  let ranRealFinalPlan = false;
+  if ((isStep12 || finalPlanMode) && planningDir) {
+    try {
+      const finalPlanOutput = await runStep12FinalPlan({
+        runId,
+        planningDir,
+        goal: input.goal,
+        target: typeof target === "string" ? target : undefined,
+      });
+
+      producedArtifacts.push({
+        type: "passto-plan",
+        path: finalPlanOutput.filePath,
+        summary: `Step 12 final plan completed: ${finalPlanOutput.summary}`,
+        metadata: {
+          sectionsGenerated: finalPlanOutput.sectionsGenerated.length,
+          sectionsMissing: finalPlanOutput.sectionsMissing.length,
+        },
+      });
+
+      if (session) {
+        session.artifacts.push("passto-plan");
+        session.history.push({
+          step: session.currentStep,
+          at: new Date().toISOString(),
+          action: "next",
+          summary: `Step 12 final plan completed: ${finalPlanOutput.summary}`,
+        });
+        savePlannerSession(session);
+      }
+
+      ranRealFinalPlan = true;
+    } catch (err) {
+      producedArtifacts.push({
+        type: "final-plan-error",
+        summary: `Step 12 final plan failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { error: true },
+      });
+      remainingWork.push("Re-run Step 12 final plan after resolving errors");
+    }
+  }
+
+  // ── Nested execution (non-Step 4/9/10/11/12 path) ─────────────────
   // If we didn't run any real step, keep the placeholder seam active.
-  const ranAnyRealStep = ranRealResearch || ranRealReview || ranRealIntegration;
+  const ranAnyRealStep = ranRealResearch || ranRealReview || ranRealIntegration || ranRealReviewGate || ranRealFinalPlan;
   if (!ranAnyRealStep) {
     const nestedExecution = await runNestedPlannerExecution(
       createNestedExecutionPlaceholderRequest({
@@ -262,7 +359,7 @@ export async function runPlannerWorkflow(
   const result = toPlannerResult({
     finalStatus: "success",
     resultSummary: ranAnyRealStep
-      ? `Planner step(s) executed: ${ranRealResearch ? "Step 4 research" : ""}${ranRealResearch && ranRealReview ? ", " : ""}${ranRealReview ? "Step 9 review" : ""}${(ranRealResearch || ranRealReview) && ranRealIntegration ? ", " : ""}${ranRealIntegration ? "Step 10 integration" : ""}`
+      ? buildStepSummary(ranRealResearch, ranRealReview, ranRealIntegration, ranRealReviewGate, ranRealFinalPlan)
       : "Phase 1B planner workflow skeleton initialized.",
     producedArtifacts,
     remainingWork: ranAnyRealStep
@@ -270,6 +367,8 @@ export async function runPlannerWorkflow(
           ...(ranRealResearch ? [] : ["Step 4 research path (not executed in this run)"]),
           ...(ranRealReview ? [] : ["Step 9 review path (not executed in this run)"]),
           ...(ranRealIntegration ? [] : ["Step 10 integration path (not executed in this run)"]),
+          ...(ranRealReviewGate ? [] : ["Step 11 review gate path (not executed in this run)"]),
+          ...(ranRealFinalPlan ? [] : ["Step 12 final plan path (not executed in this run)"]),
           ...remainingWork,
         ]
       : [
@@ -278,7 +377,7 @@ export async function runPlannerWorkflow(
           "Build planner test suite",
         ],
     handoffNote: ranAnyRealStep
-      ? `Planner steps complete: ${ranRealResearch ? "research" : ""}${ranRealResearch && ranRealReview ? ", " : ""}${ranRealReview ? "review" : ""}${(ranRealResearch || ranRealReview) && ranRealIntegration ? ", " : ""}${ranRealIntegration ? "integration" : ""}. Remaining steps for later phases.`
+      ? buildHandoffNote(ranRealResearch, ranRealReview, ranRealIntegration, ranRealReviewGate, ranRealFinalPlan)
       : "Phase 1B runtime scaffold complete. Nested execution seam is defined for a later implementation phase.",
     primaryRunId: runId,
   });
@@ -291,6 +390,10 @@ export async function runPlannerWorkflow(
       ? "planner-review-complete"
       : ranRealIntegration
       ? "planner-integration-complete"
+      : ranRealReviewGate
+      ? "planner-review-gate-complete"
+      : ranRealFinalPlan
+      ? "planner-final-plan-complete"
       : "planner-nested-execution",
     runId,
     resultSummary: result.resultSummary,
@@ -299,4 +402,38 @@ export async function runPlannerWorkflow(
   });
 
   return { result, handoff, runId, sessionId: session?.sessionId ?? runId, planningDir };
+}
+
+// ── Helper: build step summary string ──────────────────────────────
+function buildStepSummary(
+  research: boolean,
+  review: boolean,
+  integration: boolean,
+  reviewGate: boolean,
+  finalPlan: boolean,
+): string {
+  const parts: string[] = [];
+  if (research) parts.push("Step 4 research");
+  if (review) parts.push("Step 9 review");
+  if (integration) parts.push("Step 10 integration");
+  if (reviewGate) parts.push("Step 11 review gate");
+  if (finalPlan) parts.push("Step 12 final plan");
+  return `Planner step(s) executed: ${parts.join(", ")}.`;
+}
+
+// ── Helper: build handoff note ─────────────────────────────────────
+function buildHandoffNote(
+  research: boolean,
+  review: boolean,
+  integration: boolean,
+  reviewGate: boolean,
+  finalPlan: boolean,
+): string {
+  const parts: string[] = [];
+  if (research) parts.push("research");
+  if (review) parts.push("review");
+  if (integration) parts.push("integration");
+  if (reviewGate) parts.push("review gate");
+  if (finalPlan) parts.push("final plan");
+  return `Planner steps complete: ${parts.join(", ")}. Remaining steps for later phases.`;
 }
