@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readTaskDoc } from "../executor-core/task-doc.ts";
+import { parseTaskDoc, readTaskDoc } from "../executor-core/task-doc.ts";
 
 const validMinimalPath = new URL("./fixtures/valid-minimal.task.md", import.meta.url);
 const validMultiPath = new URL("./fixtures/valid-multiperspective.task.md", import.meta.url);
@@ -35,5 +35,13 @@ test("readTaskDoc rejects invalid input kind", () => {
   assert.throws(
     () => readTaskDoc(invalidBadInputsPath),
     /inputs\[0\]\.kind is invalid/,
+  );
+});
+
+test("readTaskDoc rejects unknown stage not in passto-executor stage registry", () => {
+  const bad = `---\nschema_version: "1"\nproject:\n  name: "x"\n  cwd: "/tmp/x"\nstage: "unknown"\nexpected_output:\n  todolist:\n    - "a"\n  checklist:\n    - "b"\n---\nbody`;
+  assert.throws(
+    () => parseTaskDoc(bad, "/tmp/unknown.task.md"),
+    /stage must match a registered passto-executor stage/,
   );
 });

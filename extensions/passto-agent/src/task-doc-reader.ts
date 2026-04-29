@@ -1,54 +1,6 @@
 import fs from "node:fs";
-import { isKnownExecutorStage } from "./stage-registry.ts";
-
-export type TaskDocStage = string;
-export type TaskDocThinking = "none" | "low" | "medium" | "high";
-export type TaskDocInputKind = "file" | "doc" | "artifact" | "inline";
-
-export interface TaskDocProject {
-  name: string;
-  cwd: string;
-}
-
-export interface TaskDocExpectedOutput {
-  todolist: string[];
-  checklist: string[];
-}
-
-export interface TaskDocInput {
-  kind: TaskDocInputKind;
-  path?: string;
-  content?: string;
-  label?: string;
-  required?: boolean;
-}
-
-export interface TaskDocFrontmatter {
-  schemaVersion: "1";
-  taskId?: string;
-  project: TaskDocProject;
-  stage: TaskDocStage;
-  executor?: {
-    type?: string;
-  };
-  task?: {
-    title?: string;
-  };
-  expectedOutput: TaskDocExpectedOutput;
-  constraints?: string[];
-  inputs?: TaskDocInput[];
-  hints?: {
-    preferredModel?: string;
-    preferredThinking?: TaskDocThinking;
-    preferredRole?: string;
-  };
-}
-
-export interface TaskDoc {
-  frontmatter: TaskDocFrontmatter;
-  body: string;
-  sourcePath: string;
-}
+import { isKnownExecutorStage } from "../../passto-executor/executor-core/stage-registry.ts";
+import type { PasstoAgentTaskInput } from "./types.ts";
 
 function fail(message: string): never {
   throw new Error(`Invalid task.md: ${message}`);
@@ -98,7 +50,7 @@ function createContainerForUpcomingLine(line: string | undefined): unknown {
   return trimmed.startsWith("- ") ? [] : {};
 }
 
-function parseInlineObject(itemText: string, indent: number): { value: Record<string, unknown>; pushValueContainer: boolean } {
+function parseInlineObject(itemText: string): { value: Record<string, unknown>; pushValueContainer: boolean } {
   const idx = itemText.indexOf(":");
   if (idx === -1) fail(`invalid inline object item: ${itemText}`);
   const key = itemText.slice(0, idx).trim();
@@ -134,7 +86,7 @@ function parseSimpleYaml(frontmatter: string): Record<string, unknown> {
       }
 
       if (itemText.includes(":")) {
-        const { value, pushValueContainer } = parseInlineObject(itemText, indent);
+        const { value, pushValueContainer } = parseInlineObject(itemText);
         parent.push(value);
         stack.push({ indent, container: value });
         if (pushValueContainer) {
@@ -168,85 +120,71 @@ function parseSimpleYaml(frontmatter: string): Record<string, unknown> {
   return root;
 }
 
-function normalizeFrontmatter(data: Record<string, unknown>): TaskDocFrontmatter {
-  const schemaVersion = (data.schema_version ?? data.schemaVersion) as unknown;
-  const parsedSchemaVersion = asString(schemaVersion, "schema_version");
-  if (parsedSchemaVersion !== "1") fail(`schema_version must be "1"`);
+export interface PasstoAgentInputTaskDoc {
+  frontmatter: {
+    project: { name: string; cwd: string };
+    stage: string;
+    inputs?: PasstoAgentTaskInput[];
+    hints?: { preferredRole?: string };
+  };
+  body: string;
+  sourcePath: string;
+}
+
+function normalizeInputs(value: unknown): PasstoAgentTaskInput[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.map((entry, index) => {
+    const item = asRecord(entry, `inputs[${index}]`);
+    const kind = asString(item.kind, `inputs[${index}].kind`) as PasstoAgentTaskInput["kind"];
+    const path = asString(item.path, `inputs[${index}].path`, false);
+    const content = asString(item.content, `inputs[${index}].content`, false);
+    return {
+      kind,
+      path,
+      content,
+      label: asString(item.label, `inputs[${index}].label`, false),
+      required: typeof item.required === "boolean" ? item.required : undefined,
+    } satisfies PasstoAgentTaskInput;
+  });
+}
+
+function normalizeFrontmatter(data: Record<string, unknown>) {
+  const schemaVersion = asString(data.schema_version ?? data.schemaVersion, "schema_version");
+  if (schemaVersion !== "1") fail(`schema_version must be "1"`);
 
   const project = asRecord(data.project, "project");
   const expectedOutput = asRecord(data.expected_output ?? data.expectedOutput, "expected_output");
-  const executor = data.executor ? asRecord(data.executor, "executor") : undefined;
-  const task = data.task ? asRecord(data.task, "task") : undefined;
   const hints = data.hints ? asRecord(data.hints, "hints") : undefined;
-
-  const stage = asString(data.stage, "stage") as TaskDocStage;
+  const stage = asString(data.stage, "stage") as string;
   if (!isKnownExecutorStage(stage)) fail(`stage must match a registered passto-executor stage`);
 
-  const parsedInputs = Array.isArray(data.inputs)
-    ? data.inputs.map((entry, index) => {
-        const item = asRecord(entry, `inputs[${index}]`);
-        const kind = asString(item.kind, `inputs[${index}].kind`) as TaskDocInputKind;
-        if (!["file", "doc", "artifact", "inline"].includes(kind)) fail(`inputs[${index}].kind is invalid`);
-
-        const path = asString(item.path, `inputs[${index}].path`, false);
-        const content = asString(item.content, `inputs[${index}].content`, false);
-        if (kind === "inline" && !content) fail(`inputs[${index}].content is required for inline inputs`);
-        if (kind !== "inline" && !path) fail(`inputs[${index}].path is required for non-inline inputs`);
-
-        return {
-          kind,
-          path,
-          content,
-          label: asString(item.label, `inputs[${index}].label`, false),
-          required: typeof item.required === "boolean" ? item.required : undefined,
-        } satisfies TaskDocInput;
-      })
-    : undefined;
-
-  const preferredThinking = hints
-    ? (asString(hints.preferred_thinking ?? hints.preferredThinking, "hints.preferred_thinking", false) as TaskDocThinking | undefined)
-    : undefined;
-  if (preferredThinking && !["none", "low", "medium", "high"].includes(preferredThinking)) {
-    fail(`hints.preferred_thinking must be none|low|medium|high`);
-  }
+  asString(project.name, "project.name");
+  asString(project.cwd, "project.cwd");
+  asStringArray(expectedOutput.todolist, "expected_output.todolist");
+  asStringArray(expectedOutput.checklist, "expected_output.checklist");
 
   return {
-    schemaVersion: "1",
-    taskId: asString(data.task_id ?? data.taskId, "task_id", false),
     project: {
       name: asString(project.name, "project.name") as string,
       cwd: asString(project.cwd, "project.cwd") as string,
     },
     stage,
-    executor: executor ? { type: asString(executor.type, "executor.type", false) } : undefined,
-    task: task ? { title: asString(task.title, "task.title", false) } : undefined,
-    expectedOutput: {
-      todolist: asStringArray(expectedOutput.todolist, "expected_output.todolist"),
-      checklist: asStringArray(expectedOutput.checklist, "expected_output.checklist"),
-    },
-    constraints: asStringArray(data.constraints, "constraints", false),
-    inputs: parsedInputs,
+    inputs: normalizeInputs(data.inputs),
     hints: hints
       ? {
-          preferredModel: asString(hints.preferred_model ?? hints.preferredModel, "hints.preferred_model", false),
-          preferredThinking,
           preferredRole: asString(hints.preferred_role ?? hints.preferredRole, "hints.preferred_role", false),
         }
       : undefined,
   };
 }
 
-export function parseTaskDoc(raw: string, sourcePath: string): TaskDoc {
+export function readTaskDocForPasstoAgentInput(filePath: string): PasstoAgentInputTaskDoc {
+  const raw = fs.readFileSync(filePath, "utf-8");
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
-  if (!match) fail(`missing YAML frontmatter in ${sourcePath}`);
-  const frontmatter = normalizeFrontmatter(parseSimpleYaml(match[1]));
+  if (!match) fail(`missing YAML frontmatter in ${filePath}`);
   return {
-    frontmatter,
+    frontmatter: normalizeFrontmatter(parseSimpleYaml(match[1])),
     body: match[2].trim(),
-    sourcePath,
+    sourcePath: filePath,
   };
-}
-
-export function readTaskDoc(filePath: string): TaskDoc {
-  return parseTaskDoc(fs.readFileSync(filePath, "utf-8"), filePath);
 }

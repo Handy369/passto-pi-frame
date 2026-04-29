@@ -19,10 +19,5 @@
   ],
   "scripts": {
     "test": "node --test"
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
   }
 }
