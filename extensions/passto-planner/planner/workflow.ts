@@ -13,11 +13,14 @@ import { createInitialPlannerState } from "./state.ts";
 import { toPlannerResult } from "./result.ts";
 import { createPlannerHandoff } from "./handoff.ts";
 import { createNestedExecutionPlaceholderRequest, runNestedPlannerExecution } from "./nested-execution.ts";
+import { createPlannerSession, savePlannerSession } from "./session.ts";
 
 export interface PlannerWorkflowOutput {
   result: PlannerResult;
   handoff: ReturnType<typeof createPlannerHandoff>;
   runId: string;
+  sessionId: string;
+  planningDir?: string;
 }
 
 // Ordered macro phases for the scaffold workflow.
@@ -36,7 +39,27 @@ export async function runPlannerWorkflow(
   input: PlannerNormalizedInput,
 ): Promise<PlannerWorkflowOutput> {
   const runId = `planner-${Date.now()}`;
-  const state = createInitialPlannerState(runId, "phase-1b-workflow", input);
+  const planningDir = typeof input.metadata.planningDir === "string" ? input.metadata.planningDir : undefined;
+  const target = typeof input.metadata.target === "string" ? input.metadata.target : input.goal;
+  const totalSteps = typeof input.metadata.totalSteps === "number" ? input.metadata.totalSteps : undefined;
+  const currentStep = typeof input.metadata.currentStep === "number" ? input.metadata.currentStep : undefined;
+  const session = planningDir
+    ? createPlannerSession({
+        target,
+        planningDir,
+        currentStep: currentStep ?? 1,
+        totalSteps: totalSteps ?? SCAFFOLD_PHASES.length,
+        artifacts: [],
+        runId,
+        metadata: { source: "runPlannerWorkflow" },
+      })
+    : undefined;
+  const state = createInitialPlannerState(runId, "phase-1b-workflow", input, {
+    sessionId: session?.sessionId,
+    planningDir,
+    currentStep: session?.currentStep,
+    totalSteps: session?.totalSteps,
+  });
 
   // Advance through scaffold phases.
   for (const phase of SCAFFOLD_PHASES) {
@@ -45,6 +68,15 @@ export async function runPlannerWorkflow(
   }
 
   state.status = "completed";
+
+  if (session) {
+    session.runId = runId;
+    session.currentStep = session.totalSteps;
+    session.artifacts = ["planner-workflow-scaffold", "nested-execution-seam"];
+    session.status = "active";
+    session.history.push({ step: session.currentStep, at: new Date().toISOString(), action: "next", summary: "Workflow scaffold completed" });
+    savePlannerSession(session);
+  }
 
   const nestedExecution = await runNestedPlannerExecution(
     createNestedExecutionPlaceholderRequest({
@@ -92,5 +124,5 @@ export async function runPlannerWorkflow(
     nextSteps: result.remainingWork,
   });
 
-  return { result, handoff, runId };
+  return { result, handoff, runId, sessionId: session?.sessionId ?? runId, planningDir };
 }

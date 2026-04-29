@@ -1,13 +1,11 @@
 // Phase 1A: Minimal planner contracts for passto-planner runtime.
 // Defines the core shape for planner input, state, result, and handoff.
 
-import type { ZodSchema } from "zod";
-
-// ── Core Planner Types ──────────────────────────────────────────────
 
 export type PlannerTaskId = string;
 export type PlannerRunId = string;
 export type PlanningPhase = "intake" | "analysis" | "synthesis" | "output";
+export type PlannerSessionStatus = "active" | "completed" | "cancelled" | "blocked" | "failed";
 
 // ── Planning Input ──────────────────────────────────────────────────
 
@@ -42,6 +40,16 @@ export interface PlannerState {
   completedSteps: string[];
   summary: string;
   status: "running" | "completed" | "blocked" | "failed";
+  sessionId?: string;
+  planningDir?: string;
+  currentStep?: number;
+  totalSteps?: number;
+  history?: Array<{
+    step: number;
+    summary?: string;
+    at: string;
+    action: "start" | "next" | "back" | "done" | "status";
+  }>;
 }
 
 // ── Planner Result ──────────────────────────────────────────────────

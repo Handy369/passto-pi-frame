@@ -3,14 +3,16 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Type } from "typebox";
 import { runPlannerTask } from "./tools/run-planner-task.ts";
+import {
+  closePlannerSession,
+  createPlannerSession,
+  loadPlannerSession,
+  removePlannerSession,
+  savePlannerSession,
+  type PlannerSessionState,
+} from "./planner/session.ts";
 
-interface PlannerState {
-  target: string;
-  planningDir: string;
-  currentStep: number;
-  startedAt: string;
-  artifacts: string[];
-}
+type PlannerState = PlannerSessionState;
 
 const STEP_NAMES: Record<number, string> = {
   1: "校验目标输入",
@@ -259,17 +261,15 @@ function statePath(planningDir: string): string {
 }
 
 function loadState(planningDir: string): PlannerState | null {
-  const content = tryRead(statePath(planningDir));
-  return content ? JSON.parse(content) : null;
+  return loadPlannerSession(planningDir);
 }
 
-function saveState(planningDir: string, state: PlannerState): void {
-  writeJson(statePath(planningDir), state);
+function saveState(_planningDir: string, state: PlannerState): void {
+  savePlannerSession(state);
 }
 
 function removeState(planningDir: string): void {
-  const sp = statePath(planningDir);
-  if (fs.existsSync(sp)) fs.unlinkSync(sp);
+  removePlannerSession(planningDir);
 }
 
 function scanArtifacts(planningDir: string): string[] {
@@ -441,7 +441,7 @@ export default function (pi: ExtensionAPI) {
       const planningDir = targetToDir(ctx, target);
       const currentStep = detectResumePoint(planningDir);
       const artifacts = scanArtifacts(planningDir);
-      const state: PlannerState = { target, planningDir, currentStep, startedAt: new Date().toISOString(), artifacts };
+      const state: PlannerState = createPlannerSession({ target, planningDir, currentStep, totalSteps: TOTAL_STEPS, artifacts });
       saveState(planningDir, state);
       activePlanningDirs.add(planningDir);
       updateUI(ctx, planningDir);
@@ -484,11 +484,11 @@ export default function (pi: ExtensionAPI) {
       const planningDir = targetToDir(ctx, params.target);
       const currentStep = detectResumePoint(planningDir);
       const artifacts = scanArtifacts(planningDir);
-      const state: PlannerState = { target: params.target, planningDir, currentStep, startedAt: new Date().toISOString(), artifacts };
+      const state: PlannerState = createPlannerSession({ target: params.target, planningDir, currentStep, totalSteps: TOTAL_STEPS, artifacts });
       saveState(planningDir, state);
       activePlanningDirs.add(planningDir);
       updateUI(ctx, planningDir);
-      return { content: [{ type: "text", text: `已启动 passto-planner\n目标：${params.target}\n目录：${planningDir}\n从第 ${currentStep}/${TOTAL_STEPS} 步开始` }], details: { planningDir, currentStep, artifacts } };
+      return { content: [{ type: "text", text: `已启动 passto-planner\n目标：${params.target}\n目录：${planningDir}\n会话：${state.sessionId}\n运行：${state.runId}\n从第 ${currentStep}/${TOTAL_STEPS} 步开始` }], details: { planningDir, currentStep, artifacts, sessionId: state.sessionId, runId: state.runId, status: state.status } };
     },
   });
 
@@ -506,10 +506,11 @@ export default function (pi: ExtensionAPI) {
       if (state.currentStep >= TOTAL_STEPS) return { content: [{ type: "text", text: "所有步骤已完成。" }], details: { done: true } };
       state.currentStep += 1;
       state.artifacts = scanArtifacts(params.planningDir);
+      state.history.push({ step: state.currentStep, at: new Date().toISOString(), action: "next", summary: params.stepSummary });
       saveState(params.planningDir, state);
       updateUI(ctx, params.planningDir);
       pi.sendUserMessage(`${buildPrompt(state, state.currentStep)}\n\n上一步完成：${params.stepSummary ?? "✓"}`, { deliverAs: "steer" });
-      return { content: [{ type: "text", text: `已推进到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep } };
+      return { content: [{ type: "text", text: `已推进到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep, sessionId: state.sessionId, runId: state.runId, status: state.status } };
     },
   });
 
@@ -528,10 +529,11 @@ export default function (pi: ExtensionAPI) {
       const nextStep = Math.max(2, Math.min(requested, state.currentStep - 1));
       state.currentStep = nextStep;
       state.artifacts = scanArtifacts(params.planningDir);
+      state.history.push({ step: state.currentStep, at: new Date().toISOString(), action: "back" });
       saveState(params.planningDir, state);
       updateUI(ctx, params.planningDir);
       pi.sendUserMessage(`${buildPrompt(state, state.currentStep)}\n\n已回退到第 ${state.currentStep} 步，请在当前步骤中修改并重新执行。`, { deliverAs: "steer" });
-      return { content: [{ type: "text", text: `已回退到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep } };
+      return { content: [{ type: "text", text: `已回退到第 ${state.currentStep}/${TOTAL_STEPS} 步。` }], details: { currentStep: state.currentStep, sessionId: state.sessionId, runId: state.runId, status: state.status } };
     },
   });
 
@@ -543,8 +545,10 @@ export default function (pi: ExtensionAPI) {
     async execute(_id, params) {
       const state = loadState(params.planningDir);
       if (!state) return { content: [{ type: "text", text: "未找到活跃状态。" }], details: {} };
+      state.history.push({ step: state.currentStep, at: new Date().toISOString(), action: "status" });
+      saveState(params.planningDir, state);
       return {
-        content: [{ type: "text", text: `目标：${state.target}\n目录：${state.planningDir}\n步骤：${state.currentStep}/${TOTAL_STEPS} — ${STEP_NAMES[state.currentStep] ?? "?"}\n产物：${state.artifacts.join(", ") || "（无）"}` }],
+        content: [{ type: "text", text: `目标：${state.target}\n目录：${state.planningDir}\n会话：${state.sessionId}\n运行：${state.runId}\n状态：${state.status}\n步骤：${state.currentStep}/${state.totalSteps} — ${STEP_NAMES[state.currentStep] ?? "?"}\n产物：${state.artifacts.join(", ") || "（无）"}` }],
         details: state,
       };
     },
@@ -894,11 +898,11 @@ export default function (pi: ExtensionAPI) {
     description: "完成 passto-planner 会话并清理状态。",
     parameters: Type.Object({ planningDir: Type.String({ description: "Absolute path to the planning directory" }) }),
     async execute(_id, params, _signal, _onUpdate, ctx) {
-      const state = loadState(params.planningDir);
+      const state = closePlannerSession(params.planningDir, "completed");
       removeState(params.planningDir);
       activePlanningDirs.delete(params.planningDir);
       updateUI(ctx, params.planningDir);
-      return { content: [{ type: "text", text: `passto-planner 已完成。产物目录：${params.planningDir}` }], details: { planningDir: params.planningDir, artifacts: state?.artifacts ?? scanArtifacts(params.planningDir) } };
+      return { content: [{ type: "text", text: `passto-planner 已完成。产物目录：${params.planningDir}` }], details: { planningDir: params.planningDir, artifacts: state?.artifacts ?? scanArtifacts(params.planningDir), sessionId: state?.sessionId, runId: state?.runId, status: state?.status ?? "completed" } };
     },
   });
 
@@ -933,5 +937,6 @@ export * from "./planner/result.ts";
 export * from "./planner/handoff.ts";
 export * from "./planner/workflow.ts";
 export * from "./planner/runner.ts";
+export * from "./planner/session.ts";
 export * from "./planner/nested-execution.ts";
 export * from "./tools/run-planner-task.ts";

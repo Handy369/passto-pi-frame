@@ -11,6 +11,8 @@ export type PlannerRunnerOutput = {
   result: PlannerResult;
   handoff: ReturnType<typeof createPlannerHandoff>;
   runId: string;
+  sessionId: string;
+  planningDir?: string;
 };
 
 /**
@@ -21,11 +23,20 @@ export type PlannerRunnerOutput = {
  */
 export async function runPlannerRunner(input: PlannerRawInput): Promise<PlannerRunnerOutput> {
   const normalized = normalizePlannerInput(input);
+  normalized.metadata = {
+    ...normalized.metadata,
+    planningDir: typeof input.metadata?.planningDir === "string" ? input.metadata.planningDir : undefined,
+    target: typeof input.metadata?.target === "string" ? input.metadata.target : input.goal,
+    currentStep: typeof input.metadata?.currentStep === "number" ? input.metadata.currentStep : undefined,
+    totalSteps: typeof input.metadata?.totalSteps === "number" ? input.metadata.totalSteps : undefined,
+  };
   const workflowOutput = await runPlannerWorkflow(normalized);
 
   return {
     result: workflowOutput.result,
     handoff: workflowOutput.handoff,
     runId: workflowOutput.runId,
+    sessionId: workflowOutput.sessionId,
+    planningDir: workflowOutput.planningDir,
   };
 }

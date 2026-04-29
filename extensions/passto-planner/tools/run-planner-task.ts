@@ -9,6 +9,9 @@ import { createPlannerHandoff } from "../planner/handoff.ts";
 export type PlannerTaskResponse = {
   result: PlannerResult;
   handoff: ReturnType<typeof createPlannerHandoff>;
+  runId: string;
+  sessionId: string;
+  planningDir?: string;
 };
 
 export async function runPlannerTask(input: PlannerRawInput): Promise<PlannerTaskResponse> {
@@ -18,5 +21,8 @@ export async function runPlannerTask(input: PlannerRawInput): Promise<PlannerTas
   return {
     result: runnerOutput.result,
     handoff: runnerOutput.handoff,
+    runId: runnerOutput.runId,
+    sessionId: runnerOutput.sessionId,
+    planningDir: runnerOutput.planningDir,
   };
 }
