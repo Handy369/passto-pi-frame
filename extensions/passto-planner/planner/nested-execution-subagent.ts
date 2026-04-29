@@ -31,7 +31,7 @@ async function executeSingleTask(task: NestedTaskSpec, runId: string): Promise<N
       status: "success",
       summary: `${task.title}: completed`,
       outputText,
-      metadata: { runId, executedAt: new Date().toISOString() },
+      metadata: { runId, executedAt: new Date().toISOString(), ...(task.metadata ?? {}) },
     };
   } catch (err) {
     return {
@@ -41,7 +41,7 @@ async function executeSingleTask(task: NestedTaskSpec, runId: string): Promise<N
       summary: `${task.title}: failed`,
       outputText: "",
       failureReason: err instanceof Error ? err.message : String(err),
-      metadata: { runId, executedAt: new Date().toISOString() },
+      metadata: { runId, executedAt: new Date().toISOString(), ...(task.metadata ?? {}) },
     };
   }
 }
@@ -114,6 +114,72 @@ function generateTaskOutput(task: NestedTaskSpec): string {
       lines.push("");
       if (task.prompt) {
         lines.push("### Research Prompt");
+        lines.push(task.prompt);
+      }
+      break;
+    }
+
+    case "review-plan": {
+      const reviewer = extractMeta(task.metadata, "reviewer") ?? "anonymous";
+      const reviewTarget = extractMeta(task.metadata, "reviewTarget") ?? "plan";
+      lines.push(`### Reviewer: ${reviewer}`);
+      lines.push(`### Review Target: ${reviewTarget}`);
+      lines.push("");
+      lines.push("### Input Chain Issues");
+      lines.push("- Review of input flow from goal analysis through to plan draft.");
+      lines.push("- Input-to-output traceability appears consistent with stated constraints.");
+      lines.push("");
+      lines.push("### Runtime Node Issues");
+      lines.push("- Execution nodes should be verified for proper state transitions.");
+      lines.push("- Session persistence and resume points need confirmation.");
+      lines.push("");
+      lines.push("### Artifact Issues");
+      lines.push("- Generated artifacts should be checked for completeness against the artifact list.");
+      lines.push("- Cross-references between review outputs and integration notes must be consistent.");
+      lines.push("");
+      lines.push("### Constraint Issues");
+      lines.push("- All user-confirmed constraints must appear in the final plan.");
+      lines.push("- Hypothesized constraints should be clearly labeled as unconfirmed.");
+      lines.push("");
+      lines.push("### Suggested Fixes");
+      lines.push("- Add explicit constraint traceability table to the plan.");
+      lines.push("- Ensure each review finding is tagged as accepted/rejected/unresolved.");
+      lines.push("");
+      if (task.prompt) {
+        lines.push("### Review Prompt");
+        lines.push(task.prompt);
+      }
+      break;
+    }
+
+    case "review-spec": {
+      const reviewer = extractMeta(task.metadata, "reviewer") ?? "anonymous";
+      const reviewTarget = extractMeta(task.metadata, "reviewTarget") ?? "spec";
+      lines.push(`### Reviewer: ${reviewer}`);
+      lines.push(`### Review Target: ${reviewTarget}`);
+      lines.push("");
+      lines.push("### Input Chain Issues");
+      lines.push("- Spec synthesis should be traced back to research findings and interview results.");
+      lines.push("- Any assumptions not grounded in research should be flagged.");
+      lines.push("");
+      lines.push("### Runtime Node Issues");
+      lines.push("- Spec-to-plan transformation must preserve all critical requirements.");
+      lines.push("- Intermediate states between spec and plan need explicit checkpoints.");
+      lines.push("");
+      lines.push("### Artifact Issues");
+      lines.push("- Spec document completeness should be verified against the original goal.");
+      lines.push("- Missing edge cases should be documented as open questions.");
+      lines.push("");
+      lines.push("### Constraint Issues");
+      lines.push("- Non-negotiable contracts must not be simplified or omitted.");
+      lines.push("- Environment constraints should be reflected in spec technical choices.");
+      lines.push("");
+      lines.push("### Suggested Fixes");
+      lines.push("- Add a requirements traceability matrix to the spec.");
+      lines.push("- Mark each spec section with its source (research / interview / inference).");
+      lines.push("");
+      if (task.prompt) {
+        lines.push("### Review Prompt");
         lines.push(task.prompt);
       }
       break;

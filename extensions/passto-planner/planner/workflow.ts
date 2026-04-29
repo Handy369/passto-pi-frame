@@ -15,6 +15,8 @@ import { createPlannerHandoff } from "./handoff.ts";
 import { createNestedExecutionPlaceholderRequest, runNestedPlannerExecution } from "./nested-execution.ts";
 import { createPlannerSession, savePlannerSession } from "./session.ts";
 import { runStep4Research } from "./research.ts";
+import { runStep9Review } from "./review.ts";
+import { runStep10Integration } from "./integration.ts";
 
 export interface PlannerWorkflowOutput {
   result: PlannerResult;
@@ -87,6 +89,7 @@ export async function runPlannerWorkflow(
   // Triggered when currentStep === 4 or researchMode is explicitly set
   // AND a planningDir is available (we need somewhere to write the file).
   const isStep4 = currentStep === 4;
+  let ranRealResearch = false;
   if ((isStep4 || researchMode) && planningDir) {
     try {
       const researchOutput = await runStep4Research({
@@ -118,6 +121,8 @@ export async function runPlannerWorkflow(
         });
         savePlannerSession(session);
       }
+
+      ranRealResearch = true;
     } catch (err) {
       producedArtifacts.push({
         type: "passto-research",
@@ -128,10 +133,107 @@ export async function runPlannerWorkflow(
     }
   }
 
-  // ── Nested execution (non-Step 4 path) ────────────────────────
-  // If we didn't run real research, keep the placeholder seam active.
-  const ranRealResearch = producedArtifacts.some((a) => a.type === "passto-research");
-  if (!ranRealResearch) {
+  // ── Step 9: Real review path ──────────────────────────────────
+  // Triggered when currentStep === 9 or metadata.reviewMode is set
+  // AND a planningDir is available.
+  const isStep9 = currentStep === 9;
+  const reviewMode = input.metadata.reviewMode === true || input.metadata.step9Review === true;
+  let ranRealReview = false;
+  if ((isStep9 || reviewMode) && planningDir) {
+    try {
+      const reviewOutput = await runStep9Review({
+        runId,
+        planningDir,
+        goal: input.goal,
+        target: typeof target === "string" ? target : undefined,
+        cwd: input.cwd,
+      });
+
+      for (const artifact of reviewOutput.artifacts) {
+        producedArtifacts.push({
+          type: `review-${artifact.reviewerId}`,
+          path: artifact.filePath,
+          summary: `Step 9 review by ${artifact.reviewerId} completed.`,
+          metadata: {
+            reviewerId: artifact.reviewerId,
+          },
+        });
+      }
+
+      if (session) {
+        session.artifacts.push("gpt-5.4-review", "claude-opus-4-6-review");
+        session.history.push({
+          step: session.currentStep,
+          at: new Date().toISOString(),
+          action: "next",
+          summary: `Step 9 review completed: ${reviewOutput.summary}`,
+        });
+        savePlannerSession(session);
+      }
+
+      ranRealReview = true;
+    } catch (err) {
+      producedArtifacts.push({
+        type: "review-error",
+        summary: `Step 9 review failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { error: true },
+      });
+      remainingWork.push("Re-run Step 9 review after resolving errors");
+    }
+  }
+
+  // ── Step 10: Real integration path ────────────────────────────
+  // Triggered when currentStep === 10 or metadata.integrationMode is set
+  // AND a planningDir is available.
+  const isStep10 = currentStep === 10;
+  const integrationMode = input.metadata.integrationMode === true || input.metadata.step10Integration === true;
+  let ranRealIntegration = false;
+  if ((isStep10 || integrationMode) && planningDir) {
+    try {
+      const integrationOutput = await runStep10Integration({
+        runId,
+        planningDir,
+        goal: input.goal,
+        target: typeof target === "string" ? target : undefined,
+      });
+
+      producedArtifacts.push({
+        type: "passto-integration",
+        path: integrationOutput.filePath,
+        summary: `Step 10 integration completed: ${integrationOutput.summary}`,
+        metadata: {
+          accepted: integrationOutput.accepted,
+          rejected: integrationOutput.rejected,
+          unresolved: integrationOutput.unresolved,
+        },
+      });
+
+      if (session) {
+        session.artifacts.push("passto-integration-notes");
+        session.history.push({
+          step: session.currentStep,
+          at: new Date().toISOString(),
+          action: "next",
+          summary: `Step 10 integration completed: ${integrationOutput.summary}`,
+        });
+        savePlannerSession(session);
+      }
+
+      ranRealIntegration = true;
+    } catch (err) {
+      producedArtifacts.push({
+        type: "integration-error",
+        summary: `Step 10 integration failed: ${err instanceof Error ? err.message : String(err)}`,
+        metadata: { error: true },
+      });
+      remainingWork.push("Re-run Step 10 integration after resolving errors");
+    }
+  }
+
+  // ── Nested execution (non-Step 4/9/10 path) ───────────────────
+  // If we didn't run any real step, keep the placeholder seam active.
+  const ranAnyRealStep = ranRealResearch || ranRealReview || ranRealIntegration;
+  if (!ranAnyRealStep) {
     const nestedExecution = await runNestedPlannerExecution(
       createNestedExecutionPlaceholderRequest({
         runId,
@@ -159,14 +261,15 @@ export async function runPlannerWorkflow(
 
   const result = toPlannerResult({
     finalStatus: "success",
-    resultSummary: ranRealResearch
-      ? "Step 4 minimal research path executed successfully."
+    resultSummary: ranAnyRealStep
+      ? `Planner step(s) executed: ${ranRealResearch ? "Step 4 research" : ""}${ranRealResearch && ranRealReview ? ", " : ""}${ranRealReview ? "Step 9 review" : ""}${(ranRealResearch || ranRealReview) && ranRealIntegration ? ", " : ""}${ranRealIntegration ? "Step 10 integration" : ""}`
       : "Phase 1B planner workflow skeleton initialized.",
     producedArtifacts,
-    remainingWork: ranRealResearch
+    remainingWork: ranAnyRealStep
       ? [
-          "Step 9 review path (not implemented yet)",
-          "Step 10 integration path (not implemented yet)",
+          ...(ranRealResearch ? [] : ["Step 4 research path (not executed in this run)"]),
+          ...(ranRealReview ? [] : ["Step 9 review path (not executed in this run)"]),
+          ...(ranRealIntegration ? [] : ["Step 10 integration path (not executed in this run)"]),
           ...remainingWork,
         ]
       : [
@@ -174,15 +277,21 @@ export async function runPlannerWorkflow(
           "Refine planner workflow behavior",
           "Build planner test suite",
         ],
-    handoffNote: ranRealResearch
-      ? "Step 4 research complete. passto-research.md generated. Review and integration paths remain for later phases."
+    handoffNote: ranAnyRealStep
+      ? `Planner steps complete: ${ranRealResearch ? "research" : ""}${ranRealResearch && ranRealReview ? ", " : ""}${ranRealReview ? "review" : ""}${(ranRealResearch || ranRealReview) && ranRealIntegration ? ", " : ""}${ranRealIntegration ? "integration" : ""}. Remaining steps for later phases.`
       : "Phase 1B runtime scaffold complete. Nested execution seam is defined for a later implementation phase.",
     primaryRunId: runId,
   });
 
   const handoff = createPlannerHandoff({
     from: "planner-workflow",
-    to: ranRealResearch ? "planner-research-complete" : "planner-nested-execution",
+    to: ranRealResearch
+      ? "planner-research-complete"
+      : ranRealReview
+      ? "planner-review-complete"
+      : ranRealIntegration
+      ? "planner-integration-complete"
+      : "planner-nested-execution",
     runId,
     resultSummary: result.resultSummary,
     artifacts: producedArtifacts,

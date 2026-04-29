@@ -3,7 +3,7 @@
 
 // ── Task Kinds ──────────────────────────────────────────────────────
 
-export type NestedTaskKind = "research-environment" | "research-web" | "research-codebase";
+export type NestedTaskKind = "research-environment" | "research-web" | "research-codebase" | "review-plan" | "review-spec";
 
 // ── Task Spec ───────────────────────────────────────────────────────
 
