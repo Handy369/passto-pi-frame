@@ -1,10 +1,8 @@
-import { assembleExecutorContext, getExecutorTimeoutHeuristicsConfig } from "../executor-core/assembly.ts";
+import { assembleExecutorContext } from "../executor-core/assembly.ts";
 import { executeResolvedContext, type ExecuteInvocationOptions } from "../executor-core/execute.ts";
-import { FileExecutorRunStore, getExecutorWorkspaceRoot } from "../executor-core/run-store.ts";
 import type { ExecutorInvocation } from "../executor-core/invocation.ts";
 import type { TaskDocInput, TaskDocThinking } from "../executor-core/task-doc.ts";
 import type { ExecutorRuntimePolicy } from "../executor-core/context.ts";
-import { buildBuilderExecutionPrompt, callerRequestToBuilderInput, type ExecutorCallerRequest } from "./builder-input-bridge.ts";
 
 export interface LegacySubagentLikeRequest {
   task: string;
@@ -31,64 +29,6 @@ export interface LegacySubagentLikeRequest {
 
 export interface LegacyExecuteRequestOptions extends Omit<ExecuteInvocationOptions, "extensions"> {
   extensions?: string[];
-}
-
-export type CallerExecuteRequestOptions = LegacyExecuteRequestOptions;
-
-const COMPLEXITY_KEYWORDS = [
-  "refactor",
-  "scaffold",
-  "implement",
-  "migrate",
-  "workflow",
-  "builder",
-  "planner",
-  "nested",
-  "test",
-  "commit",
-];
-
-function getTimeoutHeuristics() {
-  const configured = getExecutorTimeoutHeuristicsConfig();
-  return {
-    smallTaskMs: configured.smallTaskMs ?? 8 * 60 * 1000,
-    mediumTaskMs: configured.mediumTaskMs ?? 15 * 60 * 1000,
-    largeTaskMs: configured.largeTaskMs ?? 20 * 60 * 1000,
-    maxAutoTimeoutMs: configured.maxAutoTimeoutMs ?? 25 * 60 * 1000,
-  };
-}
-
-function clampTimeoutMs(value: number) {
-  const heuristics = getTimeoutHeuristics();
-  return Math.max(heuristics.smallTaskMs, Math.min(heuristics.maxAutoTimeoutMs, Math.floor(value)));
-}
-
-export function estimateExecutorTimeoutMs(request: ExecutorCallerRequest): number {
-  if (typeof request.timeoutMs === "number" && Number.isFinite(request.timeoutMs) && request.timeoutMs > 0) {
-    return clampTimeoutMs(request.timeoutMs);
-  }
-
-  const heuristics = getTimeoutHeuristics();
-  let score = 0;
-  const todoCount = request.todolist?.length ?? 0;
-  const outputCount = request.outputs?.length ?? 0;
-  const constraintCount = request.constraints?.length ?? 0;
-  const promptCount = request.prompts?.length ?? 0;
-  const text = [request.goal, ...(request.prompts ?? []), request.stage ?? "", ...(request.outputs ?? [])]
-    .join("\n")
-    .toLowerCase();
-
-  if (todoCount >= 3) score += 1;
-  if (todoCount >= 5) score += 1;
-  if (outputCount >= 3) score += 1;
-  if (constraintCount >= 4) score += 1;
-  if (promptCount >= 3) score += 1;
-  if (request.mode && request.mode !== "single") score += 1;
-  if (COMPLEXITY_KEYWORDS.some((keyword) => text.includes(keyword))) score += 2;
-
-  if (score >= 4) return clampTimeoutMs(heuristics.largeTaskMs);
-  if (score >= 2) return clampTimeoutMs(heuristics.mediumTaskMs);
-  return clampTimeoutMs(heuristics.smallTaskMs);
 }
 
 export function legacyRequestToInvocation(request: LegacySubagentLikeRequest): ExecutorInvocation {
@@ -138,82 +78,11 @@ export function legacyRequestToRuntimePolicy(request: LegacySubagentLikeRequest)
 
 export function legacyRequestToExecuteOptions(
   request: LegacySubagentLikeRequest,
-  options: LegacyExecuteRequestOptions = {},
+  options: LegacyExecuteRequestOptions,
 ): ExecuteInvocationOptions {
   return {
     ...options,
     extensions: request.extensions ?? options.extensions,
-    runStore: options.runStore ?? new FileExecutorRunStore({
-      rootDir: getExecutorWorkspaceRoot(request.cwd),
-    }),
-  };
-}
-
-export function callerRequestToInvocation(request: ExecutorCallerRequest): ExecutorInvocation {
-  const cwd = request.cwd ?? process.cwd();
-  const builderInput = callerRequestToBuilderInput(request);
-  return {
-    sourceTaskDocPath: "compatibility://caller-request",
-    caller: {
-      type: "caller-request",
-      name: request.agent ?? "default",
-    },
-    project: {
-      name: "compatibility-project",
-      cwd,
-    },
-    stage: "builder",
-    executorType: "passto-builder",
-    task: {
-      title: request.goal,
-      description: [
-        "Use the executor-wired internal passto-builder path for this task. passto-builder is an internal frame executor, not a user-visible tool.",
-        "Do not attempt to invoke `run_builder_task`, `passto-builder`, or any nested executor/builder entrypoint from within the child runtime.",
-        "Operate only within the implementation-only execution surface already provided by passto-executor.",
-        "After execution completes, return a concise summary including final status, primary run id, produced artifacts, and blockers if any.",
-        "",
-        "Internal BuilderInput reference JSON:",
-        JSON.stringify(builderInput, null, 2),
-      ].join("\n"),
-    },
-    expectedOutput: {
-      todolist: [...(request.todolist ?? [])],
-      checklist: [...(request.outputs ?? [])],
-    },
-    constraints: [...(request.constraints ?? [])],
-    inputs: [...(request.inputs ?? [])],
-    hints: {
-      preferredModel: request.preferredModel,
-      preferredThinking: request.preferredThinking,
-      preferredRole: "builder",
-    },
-    mode: request.mode ?? "single",
-  };
-}
-
-export function callerRequestToRuntimePolicy(request: ExecutorCallerRequest): Partial<ExecutorRuntimePolicy> {
-  return {
-    mode: request.mode,
-    maxConcurrency: request.maxConcurrency,
-    idleTimeoutMs: request.idleTimeoutMs,
-    timeoutMs: estimateExecutorTimeoutMs(request),
-    terminateGraceMs: request.terminateGraceMs,
-    completionPolicy: "process-exit",
-  };
-}
-
-export function callerRequestToExecuteOptions(
-  request: ExecutorCallerRequest,
-  options: CallerExecuteRequestOptions = {},
-): ExecuteInvocationOptions {
-  const cwd = request.cwd ?? process.cwd();
-  return {
-    ...options,
-    agent: request.agent ?? options.agent,
-    extensions: request.extensions ?? options.extensions,
-    runStore: options.runStore ?? new FileExecutorRunStore({
-      rootDir: getExecutorWorkspaceRoot(cwd),
-    }),
   };
 }
 
@@ -228,16 +97,4 @@ export async function executeLegacyRequest(
   });
 
   return executeResolvedContext(context, legacyRequestToExecuteOptions(request, options));
-}
-
-export async function executeCallerRequest(
-  request: ExecutorCallerRequest,
-  options: CallerExecuteRequestOptions = {},
-) {
-  const invocation = callerRequestToInvocation(request);
-  const context = assembleExecutorContext(invocation, {
-    runId: options.runId,
-    defaultRuntimePolicy: callerRequestToRuntimePolicy(request),
-  });
-  return executeResolvedContext(context, callerRequestToExecuteOptions(request, options));
 }

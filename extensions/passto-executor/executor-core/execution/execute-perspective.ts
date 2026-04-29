@@ -17,11 +17,6 @@ export interface ExecutePerspectiveParams {
   childRunner: (params: RunExecutorChildParams) => Promise<ExecutorChildResult>;
   contract?: string;
   runStore: ExecutorRunStore;
-  onChildProgress?: (update: {
-    runId: string;
-    perspective: string;
-    progress: ExecutorChildResult["progress"] & { usage?: ExecutorChildResult["usage"] };
-  }) => void;
 }
 
 export async function executePerspective(params: ExecutePerspectiveParams): Promise<{ perspectiveResult: ExecutorPerspectiveResult; events: ExecutorEvent[] }> {
@@ -36,23 +31,14 @@ export async function executePerspective(params: ExecutePerspectiveParams): Prom
   let childSucceeded = false;
 
   try {
-    const childResult = await params.childRunner({
-      ...buildRunExecutorChildParams({
-        context: params.context,
-        perspective: params.perspective,
-        defaultAgent: params.agent,
-        defaultExtensions: params.extensions,
-        cwd: sandbox.root,
-        contract: params.contract,
-      }),
-      onProgress(progress) {
-        params.onChildProgress?.({
-          runId: params.runId,
-          perspective: params.perspective.name,
-          progress,
-        });
-      },
-    });
+    const childResult = await params.childRunner(buildRunExecutorChildParams({
+      context: params.context,
+      perspective: params.perspective,
+      defaultAgent: params.agent,
+      defaultExtensions: params.extensions,
+      cwd: sandbox.root,
+      contract: params.contract,
+    }));
     childSucceeded = childResult.success;
 
     const events = mapChildRawEventsToExecutorEvents({

@@ -12,8 +12,6 @@ export interface ExecutorRunManifest {
   perspective: string;
   workspace: ResolvedExecutorRunContext["workspace"];
   runtimePolicy: ResolvedExecutorRunContext["runtimePolicy"];
-  modelPolicy?: ResolvedExecutorRunContext["modelPolicy"];
-  policyProvenance?: ResolvedExecutorRunContext["policyProvenance"];
   createdAt: string;
 }
 
@@ -30,9 +28,6 @@ export interface StoredExecutorResult {
   usage: ExecutorRunResult["usage"];
   contract?: ExecutorRunResult["contract"];
   failure?: ExecutorRunResult["failure"];
-  modelPolicy?: ExecutorRunResult["modelPolicy"];
-  runtimePolicy?: ExecutorRunResult["runtimePolicy"];
-  policyProvenance?: ExecutorRunResult["policyProvenance"];
   updatedAt: string;
 }
 
@@ -43,9 +38,6 @@ export interface StoredExecutorFailure {
   usage: ExecutorRunResult["usage"];
   contract?: ExecutorRunResult["contract"];
   failure?: ExecutorRunResult["failure"];
-  modelPolicy?: ExecutorRunResult["modelPolicy"];
-  runtimePolicy?: ExecutorRunResult["runtimePolicy"];
-  policyProvenance?: ExecutorRunResult["policyProvenance"];
   updatedAt: string;
 }
 
@@ -131,14 +123,6 @@ export class InMemoryExecutorRunStore implements ExecutorRunStore {
 
 export interface FileExecutorRunStoreOptions {
   rootDir: string;
-}
-
-export function getProjectPasstoAiDir(projectRoot: string): string {
-  return path.join(projectRoot, ".passto-ai");
-}
-
-export function getExecutorWorkspaceRoot(projectRoot: string): string {
-  return path.join(getProjectPasstoAiDir(projectRoot), "executor");
 }
 
 export class FileExecutorRunStore implements ExecutorRunStore {
@@ -250,8 +234,6 @@ export function buildRunManifest(params: {
   perspective: string;
   workspace: ResolvedExecutorRunContext["workspace"];
   runtimePolicy: ResolvedExecutorRunContext["runtimePolicy"];
-  modelPolicy?: ResolvedExecutorRunContext["modelPolicy"];
-  policyProvenance?: ResolvedExecutorRunContext["policyProvenance"];
 }): ExecutorRunManifest {
   return {
     ...params,
@@ -267,9 +249,6 @@ export function resultToStoredRecord(result: ExecutorRunResult): StoredExecutorR
     usage: result.usage,
     contract: result.contract,
     failure: result.failure,
-    modelPolicy: result.modelPolicy,
-    runtimePolicy: result.runtimePolicy,
-    policyProvenance: result.policyProvenance,
     updatedAt: new Date().toISOString(),
   };
 

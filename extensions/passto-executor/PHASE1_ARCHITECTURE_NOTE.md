@@ -4,6 +4,11 @@
 
 Phase 1 defines the initial container-shaped execution surface for `passto-executor`.
 
+In frame terms, this establishes the earliest version of:
+- the only top-level execution entry
+- the container that later selects an executor by `stage`
+- the assembly boundary that supplies runtime inputs executors cannot independently own
+
 The implemented skeleton now covers this path:
 
 1. `task.md` frontmatter + body parsing via `executor-core/task-doc.ts`
@@ -39,6 +44,7 @@ This skeleton is sufficient because it freezes the core boundaries needed for la
 - `ResolvedExecutorRunContext` is the executor-owned assembled context
 - `ExecutorRunResult` and `ExecutorEvent` define the initial runtime truth model
 - run-store and sandbox now exist as replaceable seams rather than future ad-hoc additions
+- the container/executor split can later be layered on top without replacing these core seams
 
 ## Handoff to later phases
 
@@ -48,3 +54,4 @@ Future phases should build on these seams instead of bypassing them:
 - replace in-memory store with persistent store behind the same interface
 - replace no-op sandbox with worktree-backed isolation behind the same interface
 - extend `execute.ts` from single-perspective flow into broader orchestration without collapsing module boundaries
+- layer executor selection by `stage` on top of the container without turning executors into peer public entrypoints

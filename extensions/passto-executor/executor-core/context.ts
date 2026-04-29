@@ -51,26 +51,6 @@ export interface ExecutorPerspectiveSpec {
   runtimeOptions?: Partial<ExecutorRuntimePolicy>;
 }
 
-export type ExecutorPolicySource =
-  | "caller"
-  | "invocation"
-  | "perspective"
-  | "stage"
-  | "contract"
-  | "executor-default"
-  | "runtime-default";
-
-export interface ExecutorPolicyProvenance {
-  preferredModel?: ExecutorPolicySource;
-  preferredThinking?: ExecutorPolicySource;
-  mode?: ExecutorPolicySource;
-  completionPolicy?: ExecutorPolicySource;
-  idleTimeoutMs?: ExecutorPolicySource;
-  timeoutMs?: ExecutorPolicySource;
-  terminateGraceMs?: ExecutorPolicySource;
-  maxConcurrency?: ExecutorPolicySource;
-}
-
 export interface ResolvedExecutorRunContext {
   runId: string;
   invocation: ExecutorInvocation;
@@ -81,7 +61,6 @@ export interface ResolvedExecutorRunContext {
   modelPolicy: ExecutorModelPolicy;
   outputPolicy: ExecutorOutputPolicy;
   runtimePolicy: ExecutorRuntimePolicy;
-  policyProvenance?: ExecutorPolicyProvenance;
   workspace: {
     projectRoot: string;
     sandboxRoot?: string;

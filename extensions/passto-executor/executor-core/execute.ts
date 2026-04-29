@@ -2,7 +2,6 @@ import { assembleExecutorContext } from "./assembly.ts";
 import type { ExecutorInvocation } from "./invocation.ts";
 import { buildAggregatedExecutorRunResult, type ExecutorRunResult } from "./result.ts";
 import { buildRunManifest, InMemoryExecutorRunStore, resultToStoredRecord, type ExecutorRunStore } from "./run-store.ts";
-import { ensurePasstoProjectWorkspace } from "./project-workspace.ts";
 import { runExecutorChild, type ExecutorChildResult, type RunExecutorChildParams } from "./runtime.ts";
 import { NoopSandboxManager, type SandboxManager } from "./sandbox.ts";
 import type { ResolvedExecutorRunContext } from "./context.ts";
@@ -17,11 +16,6 @@ export interface ExecuteInvocationOptions {
   runStore?: ExecutorRunStore;
   sandboxManager?: SandboxManager;
   childRunner?: (params: RunExecutorChildParams) => Promise<ExecutorChildResult>;
-  onChildProgress?: (update: {
-    runId: string;
-    perspective: string;
-    progress: ExecutorChildResult["progress"] & { usage?: ExecutorChildResult["usage"] };
-  }) => void;
 }
 
 
@@ -31,7 +25,6 @@ export async function executeResolvedContext(context: ResolvedExecutorRunContext
   const childRunner = options.childRunner ?? runExecutorChild;
   const plan = planPerspectiveExecution(context);
   assertSupportedExecutionMode(plan.mode, plan.dagValidation);
-  await ensurePasstoProjectWorkspace(context.workspace.projectRoot);
 
   await runStore.createRun(options.runId, buildRunManifest({
     runId: options.runId,
@@ -39,8 +32,6 @@ export async function executeResolvedContext(context: ResolvedExecutorRunContext
     perspective: plan.items.map((item) => item.perspective.name).join(","),
     workspace: context.workspace,
     runtimePolicy: context.runtimePolicy,
-    modelPolicy: context.modelPolicy,
-    policyProvenance: context.policyProvenance,
   }));
 
   const executed = context.runtimePolicy.mode === "parallel" || context.runtimePolicy.mode === "dag"
@@ -65,9 +56,6 @@ export async function executeResolvedContext(context: ResolvedExecutorRunContext
     runId: options.runId,
     perspectiveResults: executed.perspectiveResults,
     events: executed.events,
-    modelPolicy: context.modelPolicy,
-    runtimePolicy: context.runtimePolicy,
-    policyProvenance: context.policyProvenance,
   });
 
   if (result.status === "completed") await runStore.writeResult(options.runId, resultToStoredRecord(result));
