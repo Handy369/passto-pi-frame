@@ -361,7 +361,7 @@ ${state.artifacts.map((a) => `  - ${a}`).join("\n") || "  （无）"}
 - references 是目录；不要直接读取整个 references 目录
 - 先确定当前步骤需要哪些 references/*.md，再逐个读取具体文件
 - 调用任何 research / review 子任务前，必须先读取 references/subagent-prompt-contracts.md
-- Research / Review 属于 `passto-executor` 容器中 `stage=planner` 运行的 `passto-planner` 内部 orchestration
+- Research / Review 属于 'passto-executor' 容器中 'stage=planner' 运行的 'passto-planner' 内部 orchestration
 - Execute Research 与 Review 都必须由主模型直接启动并管理顾问/子任务
 - 不把某个具体宿主工具名当作 workflow 本体契约
 - 本 workflow 的目标是输出 passto-plan.md，而不是立即实现代码
