@@ -1,4 +1,4 @@
-import { verifyRalphLoop } from "../../pi-subagent/ralph-verification.ts";
+import { verifyRalphLoop } from "./ralph-verification.ts";
 
 export type ExecutionContractName = "ralph-loop";
 
