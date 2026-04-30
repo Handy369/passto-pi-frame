@@ -258,6 +258,8 @@ export async function runSubagent(
         runtimeVersion: "passto-agent-runtime-v1",
         agentProfile: agentProfile?.name,
         agentProfilePath: agentProfile?.filePath,
+        modelName: resolvedOptions.model ?? agentProfile?.model,
+        thinking: typeof resolvedOptions.thinking === "string" ? resolvedOptions.thinking : agentProfile?.thinking,
       },
     };
   } finally {

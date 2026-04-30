@@ -7,6 +7,9 @@ export interface ExecutorChildProgress {
   currentToolArgsPreview?: string;
   lastAssistantText?: string;
   recentActivity?: string[];
+  activeAgentLabel?: string;
+  activeModelName?: string;
+  activeThinkingLevel?: string;
 }
 
 export interface ExecutorRuntimeTransportOptions {
@@ -89,6 +92,9 @@ export async function runExecutorChild(params: RunExecutorChildParams): Promise<
       currentToolArgsPreview: result.progress.currentToolArgsPreview,
       lastAssistantText: result.progress.lastAssistantText,
       recentActivity: result.progress.recentActivity,
+      activeAgentLabel: params.agent,
+      activeModelName: result.provenance.modelName,
+      activeThinkingLevel: result.provenance.thinking,
     },
     provenance: result.provenance,
   };

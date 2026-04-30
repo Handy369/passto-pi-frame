@@ -23,6 +23,16 @@ export interface ExecutorRunResult {
     reason?: string;
     errorMessage?: string;
   };
+  display?: {
+    title: string;
+    activeAgentLabel?: string;
+    activeModelName?: string;
+    activeThinkingLevel?: string;
+    lastMessage?: string;
+    currentTool?: string;
+    currentToolArgsPreview?: string;
+    finalSummary?: string;
+  };
 }
 
 function summarizeChildResult(childResult: ExecutorChildResult): string {
@@ -85,6 +95,17 @@ export function buildAggregatedExecutorRunResult(params: {
   const failedPerspective = params.perspectiveResults.find((item) => item.status === "failed");
   const status = failedPerspective ? "failed" : "completed";
   const summaryText = params.perspectiveResults.map((item) => `${item.perspective}: ${item.summaryText}`).join("\n");
+  const primaryPerspective = params.perspectiveResults[0];
+  const displayTitle = primaryPerspective?.perspective || "passto-executor";
+  const displayLastMessage = primaryPerspective?.child?.progress.lastAssistantText
+    || primaryPerspective?.child?.finalOutputText
+    || primaryPerspective?.summaryText;
+  const activeAgentLabel = primaryPerspective?.child?.progress.activeAgentLabel;
+  const activeModelName = primaryPerspective?.child?.progress.activeModelName;
+  const activeThinkingLevel = primaryPerspective?.child?.progress.activeThinkingLevel;
+  const currentTool = primaryPerspective?.child?.progress.currentTool;
+  const currentToolArgsPreview = primaryPerspective?.child?.progress.currentToolArgsPreview;
+  const finalSummary = primaryPerspective?.child?.finalOutputText || primaryPerspective?.summaryText;
 
   return {
     runId: params.runId,
@@ -100,5 +121,15 @@ export function buildAggregatedExecutorRunResult(params: {
           errorMessage: failedPerspective.child?.errorMessage,
         }
       : undefined,
+    display: {
+      title: displayTitle,
+      activeAgentLabel,
+      activeModelName,
+      activeThinkingLevel,
+      lastMessage: displayLastMessage,
+      currentTool,
+      currentToolArgsPreview,
+      finalSummary,
+    },
   };
 }

@@ -26,10 +26,13 @@ function getSeenMessageSignatures(state: MutableResultState): Set<string> {
 
 function getTextFromMessage(message: any): string {
   if (!message || !Array.isArray(message.content)) return "";
+  const textParts: string[] = [];
   for (const part of message.content) {
-    if (part?.type === "text" && typeof part.text === "string" && part.text.trim()) return part.text;
+    if (part?.type === "text" && typeof part.text === "string" && part.text.trim()) {
+      textParts.push(part.text.trim());
+    }
   }
-  return "";
+  return textParts.join("\n\n").trim();
 }
 
 function updateUsage(target: SubagentUsage, usage: any): void {

@@ -132,6 +132,8 @@ export type SubagentRunResult = {
     runtimeVersion: string;
     agentProfile?: string;
     agentProfilePath?: string;
+    modelName?: string;
+    thinking?: string;
   };
 };
 
