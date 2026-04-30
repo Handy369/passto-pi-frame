@@ -22,3 +22,4 @@ export * from "./sandbox.ts";
 export * from "./sandbox/temp-copy-sandbox.ts";
 export * from "./sandbox/worktree-sandbox.ts";
 export * from "./sandbox/strategy-manager.ts";
+export * from "./project-workspace.ts";
