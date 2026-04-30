@@ -2,6 +2,16 @@ import { emptyUsage, type ChildAgentEvent, type SubagentProgress } from "./types
 
 const MAX_ACTIVITY = 8;
 
+function summarizeAssistantText(text: string | undefined): string | undefined {
+  if (!text) return text;
+  const normalized = text.replace(/\r\n?/g, "\n").trim();
+  if (!normalized) return undefined;
+  const paragraphs = normalized.split(/\n\s*\n/).map((item) => item.trim()).filter(Boolean);
+  const firstParagraph = paragraphs[0] ?? normalized;
+  const firstLine = firstParagraph.split("\n").map((item) => item.trim()).find(Boolean);
+  return firstLine ?? firstParagraph;
+}
+
 function clip(text: string | undefined, max = 160): string | undefined {
   if (!text) return text;
   const single = text.replace(/\s+/g, " ").trim();
@@ -34,10 +44,12 @@ export function applyEventToProgress(progress: SubagentProgress, event: ChildAge
   if (progress.phase === "starting") progress.phase = "running";
 
   switch (event.type) {
-    case "assistant":
-      progress.lastAssistantText = clip(event.text);
-      pushActivity(progress, `assistant: ${clip(event.text, 80)}`);
+    case "assistant": {
+      const summary = summarizeAssistantText(event.text);
+      progress.lastAssistantText = clip(summary);
+      pushActivity(progress, `assistant: ${clip(summary, 80)}`);
       break;
+    }
     case "tool_call":
       progress.currentTool = event.toolName;
       progress.currentToolArgsPreview = clip(event.argsPreview, 120);

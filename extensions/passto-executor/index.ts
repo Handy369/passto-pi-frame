@@ -24,6 +24,6 @@ export {
 } from "./compatibility/index.ts";
 
 export default function (_pi: ExtensionAPI) {
-  // Internal-only extension: passto-executor currently exposes a code API surface
-  // for sibling extensions but does not register command/tool surfaces for Pi.
+  // Internal-only extension: passto-executor exposes code APIs and internal render helpers
+  // but should not present a direct user/LLM entrypoint now that passto-agent owns entry.
 }
