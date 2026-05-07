@@ -24,6 +24,19 @@
 - 每次提问前搜索相关记忆并自动注入
 - 自动清理过期记忆
 
+### 🔄 GRC 认知循环（已启用）
+当前版本已将 GRC（Generator-Reflector-Curator）集成到主扩展中：
+
+- 对话达到阈值后自动触发 GRC 模式（默认第 6 个用户轮次）
+- `before_agent_start` 注入基础 GRC prompt、Reflector 建议、相关 principles
+- 支持 `manualMode = auto | forced-on | forced-off`，可通过 `/pta on|off` 切换
+- `turn_end` 触发一次隐藏的 steer 反思，引导主 LLM 做 2-3 句回顾
+- Reflector / Curator 通过后台 `complete()` 异步运行，不阻塞主对话
+- Curator 会提取结构化摘要与 principles，并持久化到 `~/.passtocontext/memory/principles/`
+- `context` hook 会用 Curator 摘要替换旧 turn，保留最近若干完整轮次
+- `session_before_compact` 在 GRC 模式下会优先复用 Curator 最新摘要，而不是重新跑一次普通 compaction LLM
+- Widget / status 已显示 GRC 状态：`◆ R:✓ C:⟳`
+
 ### 📊 上下文追踪
 实时会话监控，显示：
 
@@ -148,6 +161,30 @@ ln -sf "$SRC/package.json"     ./package.json
 
 显示当前 PasstoContext 配置。
 
+### `/pta` / `/PTA` — GRC 控制台
+
+```
+/pta
+/pta status
+/pta on
+/pta off
+/pta reflect
+/pta curate
+/pta principles
+/pta principles context hook
+/pta config
+```
+
+用于查看和控制 GRC（Generator-Reflector-Curator）状态：
+
+- `/pta` 或 `/pta status`：显示 GRC 完整状态
+- `/pta on`：强制开启 GRC，并立即触发一次 steer + 后台分析
+- `/pta off`：强制停用 GRC，暂停 prompt 注入、principles 注入、context 修剪、自动触发与 curator-aware compaction
+- `/pta reflect`：只手动触发 Reflector
+- `/pta curate`：只手动触发 Curator
+- `/pta principles [query]`：列出或搜索 principles
+- `/pta config`：显示 `grc` 配置
+
 ## 配置
 
 PasstoContext 使用 JSON 配置文件：
@@ -181,6 +218,19 @@ PasstoContext 使用 JSON 配置文件：
     "enabled": true,
     "showWidget": true
   },
+  "grc": {
+    "enabled": true,
+    "grcTurnThreshold": 6,
+    "grcCooldownTurns": 4,
+    "curatorKeepRecentTurns": 4,
+    "subagentModel": "gemini-3-flash",
+    "subagentModelProvider": "opencode",
+    "maxReflectorTokens": 1500,
+    "maxCuratorSummaryTokens": 3000,
+    "principlesDir": "~/.passtocontext/memory/principles",
+    "maxPrinciplesInjection": 5,
+    "maxPrinciples": 100
+  },
   "logLevel": "info"
 }
 ```
@@ -200,7 +250,20 @@ PasstoContext 使用 JSON 配置文件：
 | `memory.maxMemoryFiles` | `500` | 最多保留的记忆条数 |
 | `tracking.enabled` | `true` | 启用会话状态追踪 |
 | `tracking.showWidget` | `true` | 在编辑器 Widget 区域显示状态 |
+| `grc.enabled` | `true` | 启用 GRC 认知循环 |
+| `grc.grcTurnThreshold` | `6` | 达到多少个用户轮次后触发第一次 GRC |
+| `grc.grcCooldownTurns` | `4` | 两次 GRC 之间至少间隔多少个用户轮次 |
+| `grc.curatorKeepRecentTurns` | `4` | `context` 修剪时保留的最近完整轮次数 |
+| `grc.subagentModel` | `gemini-3-flash` | Reflector / Curator 使用的模型 |
+| `grc.subagentModelProvider` | `opencode` | Reflector / Curator 模型提供商 |
+| `grc.maxReflectorTokens` | `1500` | Reflector 最大输出 Token |
+| `grc.maxCuratorSummaryTokens` | `3000` | Curator 最大输出 Token |
+| `grc.principlesDir` | `~/.passtocontext/memory/principles` | principles 持久化目录 |
+| `grc.maxPrinciplesInjection` | `5` | 每次提问最多注入多少条 principle |
+| `grc.maxPrinciples` | `100` | principles 最大保留数量 |
 | `logLevel` | `info` | 日志级别：error、warn、info、debug |
+
+> 注：`manualMode` 不在配置文件中声明，而是运行态状态，由 `/pta on` / `/pta off` 控制，并通过 `pi.appendEntry("grc-state", ...)` 持久化。
 
 ## 记忆存储
 
@@ -208,9 +271,10 @@ PasstoContext 使用 JSON 配置文件：
 
 ```
 ~/.passtocontext/memory/
-├── sessions/     # 自动保存的会话摘要
-├── entities/     # 实体知识
-└── notes/        # 手动保存的笔记
+├── sessions/       # 自动保存的会话摘要
+├── entities/       # 实体知识
+├── notes/          # 手动保存的笔记
+└── principles/     # Curator 提取的全局经验原则
 ```
 
 示例记忆文件：
@@ -281,6 +345,94 @@ PasstoContext 搜索相关记忆
 LLM 看到相关历史而不增加 Token 负担
 ```
 
+### GRC 工作流（当前实现）
+
+```
+用户对话持续进行
+    │
+    ▼
+turn_end 中累计用户轮次
+    │
+    ├─ < 阈值: 仅注入基础 GRC prompt / memory / principles
+    │
+    └─ >= 阈值: 激活 GRC
+            │
+            ├─ sendMessage(..., { deliverAs: "steer" }) 注入一次反思提示
+            ├─ 后台启动 Reflector
+            └─ 后台启动 Curator
+                    │
+                    ├─ Reflector: 产出可注入的顾问意见，或明确无实质建议
+                    ├─ Curator: 产出结构化摘要 + principles
+                    ├─ before_agent_start: 注入 Reflector 意见 + principles
+                    └─ context: 用 Curator 摘要替换旧 turn
+```
+
+### 当前实现状态（2026-05-07）
+
+基于真实本地 Pi CLI 环境验证，以下能力已跑通：
+
+- 扩展通过 `~/.pi/agent/settings.json` 挂载资源仓后可真实加载
+- 第 6 个用户轮次会自动触发 GRC
+- steer 反思会真实追加到主对话
+- Reflector / Curator 会在后台真实调用模型
+- Curator 摘要会真实驱动 `context` 修剪（日志可见 `15 -> 9 messages`）
+- principles 会真实落盘到 `~/.passtocontext/memory/principles/`
+- principle tags 由 LLM 直接生成，不再本地粗切中文
+- tracker 的 `turnCount` 表示用户轮次；`grcState.turnCount` 表示 GRC 内部工作流计数
+- Reflector 在“无实质建议”时会记录日志：`Reflector finished (no substantive advice)`
+- `manualMode=forced-off` 会关闭 GRC prompt 注入、principles 注入、context 修剪和 curator-aware compaction
+- `session_before_compact` 已实现 curator-first 策略，日志可见：`Using curator summary for compaction`
+
+### 测试状态（2026-05-07）
+
+基于本地真实 Pi CLI + 源码运行态测试，已验证：
+
+- 扩展在 `--no-extensions --extension /Users/handy/dev/passto-ai/extensions/passto-context --no-skills` 隔离模式下可正常加载
+- Pi 编译后的 jiti 产物中已包含 `/pta` 与 `/PTA` 命令注册
+- Pi 编译后的 jiti 产物中已包含 curator-aware compaction 分支
+- `grc-state.ts` 纯函数测试通过：
+  - 第 6 轮 `shouldTriggerGRC() === true`
+  - `forceActivateGRC()` 会进入 `mode="grc"` 且 `manualMode="forced-on"`
+  - `forced-off` 会使 `shouldTriggerGRC()` / `shouldTriggerNextCycle()` 均返回 `false`
+- 真实 TUI 回归脚本已通过：
+  - `/pta status`
+  - `/pta on`
+  - `/pta off`
+  - `/pta reflect`
+  - `/pta curate`
+  - `/reload` 后状态保持
+  - `/new` 后 session-scoped GRC 状态重置
+  - `/resume` 对话框可正常打开并切换到 All 视图
+- 6.1/6.4 相关修复已验证：
+  - `restoreGRCState()` 会把持久化的 `running` 恢复为 `idle`
+  - shutdown / reload 后旧 Promise 不会污染新会话
+  - principles 会在 session_start / session_shutdown 按上限清理
+
+### 自动化验证
+
+项目提供真实 Pi TUI 回归脚本：
+
+```bash
+npm test
+```
+
+或直接运行：
+
+```bash
+./scripts/tui-regression.sh
+```
+
+该脚本使用 `tmux` 驱动真实 Pi 全屏交互界面，断言以下行为：
+
+- 扩展成功加载
+- `/pta status` 初始状态正确
+- `/pta on` / `/pta off` 会正确切换 `manualMode` 与 `mode`
+- `/pta reflect` / `/pta curate` 可在真实 TUI 中触发
+- `/reload` 后 `manualMode` 仍会恢复
+- `/new` 后会创建新 session，且 `manualMode` / `mode` / `grcCycleCount` 重置
+- `/resume` 对话框在真实 TUI 中可正常打开；由于 All 视图会混入全局历史 session，自动选择正确旧 session 目前不作为稳定脚本断言
+- 持久化的 `running` 状态不会在 reload 后错误保留
+
 ## 常见问题
 
 ### "PasstoContext not initialized"
@@ -311,15 +463,24 @@ LLM 看到相关历史而不增加 Token 负担
 
 ```
 passto-context/
-├── index.ts           # 主入口：事件注册、命令路由
-├── config.ts          # 配置加载
-├── types.ts           # TypeScript 类型定义
-├── utils.ts           # 工具函数
-├── compaction.ts       # 智能压缩逻辑
-├── memory.ts          # 记忆管理（高层接口）
-├── memory-index.ts    # 内存搜索引擎
-├── context-tracker.ts # 会话状态追踪
-└── package.json       # 包清单
+├── index.ts               # 主入口：事件注册、命令路由、GRC 集成
+├── config.ts              # 配置加载
+├── types.ts               # TypeScript 类型定义
+├── utils.ts               # 工具函数
+├── compaction.ts          # 智能压缩逻辑
+├── memory.ts              # 记忆管理（高层接口）
+├── memory-index.ts        # 内存搜索引擎
+├── context-tracker.ts     # 会话状态追踪
+├── grc-state.ts           # GRC 状态机
+├── grc-prompts.ts         # Generator / Reflector / Curator prompt 模板
+├── grc-subagent.ts        # Reflector / Curator 执行与解析
+├── grc-principles.ts      # principles 存储、检索、命中统计
+├── grc-context-manager.ts # Curator 摘要驱动的 context 修剪
+├── DESIGN-GRC.md          # GRC 设计文档
+├── TODO.md                # GRC 实施 TODO
+├── scripts/
+│   └── tui-regression.sh  # 真实 Pi TUI 回归脚本（tmux 驱动）
+└── package.json           # 包清单 / 测试命令
 ```
 
 ---

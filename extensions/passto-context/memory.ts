@@ -18,7 +18,7 @@ export interface MemoryManager {
   /**
    * Initialize: load memories from disk into memory index
    */
-  init(): Promise<void>;
+  init(sessionFile?: string | null): Promise<void>;
 
   /**
    * Search for relevant memories

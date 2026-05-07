@@ -177,6 +177,19 @@ function extractErrorsFromToolResults(toolResults: PiMessage[]): string[] {
   return errors;
 }
 
+function getLatestUserTimestamp(ctx: ExtensionContext): number | null {
+  const branch = ctx.sessionManager.getBranch();
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const entry = branch[i];
+    if (entry.type !== "message") continue;
+    const message = entry.message as { role?: string; timestamp?: number } | undefined;
+    if (message?.role === "user" && typeof message.timestamp === "number") {
+      return message.timestamp;
+    }
+  }
+  return null;
+}
+
 // =============================================================================
 // Context Tracker
 // =============================================================================
@@ -193,19 +206,28 @@ export interface ContextTracker {
 
 export function createContextTracker(config: TrackingConfig, logger: Logger): ContextTracker {
   let state: SessionState = createInitialState();
+  let lastCountedUserTimestamp: number | null = null;
 
   return {
     /**
      * Handle turn_end event
      */
-    onTurnEnd(event: TurnEndEvent, _ctx: ExtensionContext) {
+    onTurnEnd(event: TurnEndEvent, ctx: ExtensionContext) {
       if (!config.enabled) return;
 
-      state.turnCount++;
-
-      // Extract assistant message
       const assistantMsg = event.message as PiMessage | undefined;
       if (!assistantMsg) return;
+
+      const latestUserTimestamp = getLatestUserTimestamp(ctx);
+      const isCountableTurn = latestUserTimestamp !== null && latestUserTimestamp !== lastCountedUserTimestamp;
+      if (isCountableTurn) {
+        state.turnCount++;
+        lastCountedUserTimestamp = latestUserTimestamp;
+      } else {
+        logger.debug("Skipped tracker turn increment for non-user-originated assistant turn");
+      }
+
+      // Extract assistant message
 
       // Extract thinking for decisions
       if (assistantMsg.thinking) {
@@ -250,7 +272,7 @@ export function createContextTracker(config: TrackingConfig, logger: Logger): Co
       }
 
       logger.debug(
-        `Turn ${state.turnCount}: ${Object.keys(state.toolsUsed).length} tools, ${state.filesModified.length} files`,
+        `Tracker turn ${state.turnCount}${isCountableTurn ? "" : " (not incremented)"}: ${Object.keys(state.toolsUsed).length} tools, ${state.filesModified.length} files`,
       );
     },
 
@@ -286,6 +308,7 @@ export function createContextTracker(config: TrackingConfig, logger: Logger): Co
      */
     reset() {
       state = createInitialState();
+      lastCountedUserTimestamp = null;
       logger.debug("Session state reset");
     },
 
@@ -293,12 +316,14 @@ export function createContextTracker(config: TrackingConfig, logger: Logger): Co
      * Restore state from persisted data
      */
     restore(persistedState: SessionState) {
-      // Don't restore turn count (start fresh in new session)
-      // But keep files modified and decisions as context
+      state.turnCount = persistedState.turnCount || 0;
+      state.tokenUsage = persistedState.tokenUsage || null;
       state.filesModified = persistedState.filesModified || [];
+      state.toolsUsed = persistedState.toolsUsed || {};
       state.keyDecisions = persistedState.keyDecisions || [];
       state.errors = persistedState.errors || [];
-      logger.debug(`Restored ${state.filesModified.length} files, ${state.keyDecisions.length} decisions`);
+      state.startTime = persistedState.startTime || state.startTime;
+      logger.debug(`Restored turnCount=${state.turnCount}, ${state.filesModified.length} files, ${state.keyDecisions.length} decisions`);
     },
 
     /**

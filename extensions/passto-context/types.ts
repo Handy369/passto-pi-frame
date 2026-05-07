@@ -11,6 +11,7 @@ export interface PasstoContextConfig {
   compaction: CompactionConfig;
   memory: MemoryConfig;
   tracking: TrackingConfig;
+  grc: GRCConfig;
   logLevel: LogLevel;
 }
 
@@ -36,6 +37,20 @@ export interface MemoryConfig {
 export interface TrackingConfig {
   enabled: boolean;
   showWidget: boolean;
+}
+
+export interface GRCConfig {
+  enabled: boolean;
+  grcTurnThreshold: number;
+  grcCooldownTurns: number;
+  curatorKeepRecentTurns: number;
+  subagentModel: string;
+  subagentModelProvider: string;
+  maxReflectorTokens: number;
+  maxCuratorSummaryTokens: number;
+  principlesDir: string;
+  maxPrinciplesInjection: number;
+  maxPrinciples: number;
 }
 
 export type LogLevel = "error" | "warn" | "info" | "debug";
@@ -86,6 +101,77 @@ export interface TokenUsage {
 }
 
 // =============================================================================
+// GRC
+// =============================================================================
+
+export type GRCMode = "normal" | "grc";
+export type GRCManualMode = "auto" | "forced-on" | "forced-off";
+export type SubagentStatus = "idle" | "running" | "done" | "failed";
+
+export interface GRCState {
+  mode: GRCMode;
+  manualMode: GRCManualMode;
+  turnCount: number;
+  grcCycleCount: number;
+  reflector: {
+    status: SubagentStatus;
+    lastAdvice: string | null;
+    processedUpToTurn: number;
+  };
+  curator: {
+    status: SubagentStatus;
+    lastSummary: string | null;
+    processedUpToTurn: number;
+    principlesExtracted: number;
+  };
+  activatedAtTurn: number | null;
+  lastGrcTriggerTurn: number;
+}
+
+export interface ReflectorResult {
+  advice: string;
+  hasSubstantiveContent: boolean;
+  sections: {
+    direction: string;
+    blindSpots: string[];
+    risks: string[];
+    suggestions: string[];
+  };
+}
+
+export interface PrincipleDraft {
+  content: string;
+  tags: string[];
+}
+
+export interface CuratorResult {
+  summary: string;
+  principles: PrincipleDraft[];
+  sections: {
+    goal: string;
+    completed: string[];
+    decisions: string[];
+    files: string[];
+    status: string;
+    nextSteps: string[];
+    warnings: string[];
+  };
+}
+
+export interface PrincipleItem {
+  id: string;
+  created: string;
+  tags: string[];
+  content: string;
+  metadata: {
+    source?: string;
+    hitCount?: number;
+    lastUsed?: string;
+  };
+  score?: number;
+}
+
+// =============================================================================
 // Compaction
 // =============================================================================
 
@@ -93,6 +179,7 @@ export interface CompactionResult {
   summary: string;
   firstKeptEntryId: string;
   tokensBefore: number;
+  details?: unknown;
 }
 
 // =============================================================================

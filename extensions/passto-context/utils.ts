@@ -114,24 +114,29 @@ export function extractKeywords(text: string): string[] {
 /**
  * Deep merge two objects. overrides takes precedence.
  */
-export function deepMerge<T extends Record<string, unknown>>(defaults: T, overrides: Partial<T>): T {
-  const result: Record<string, unknown> = { ...defaults };
+export function deepMerge<T extends object>(defaults: T, overrides: Partial<T>): T {
+  const result = { ...(defaults as Record<string, unknown>) };
 
-  for (const key of Object.keys(overrides)) {
-    const d = defaults[key as keyof T];
-    const o = overrides[key as keyof T];
+  for (const key of Object.keys(overrides) as Array<keyof T>) {
+    const d = defaults[key];
+    const o = overrides[key];
 
     if (
       o !== null &&
+      o !== undefined &&
       typeof o === "object" &&
       !Array.isArray(o) &&
       d !== null &&
+      d !== undefined &&
       typeof d === "object" &&
       !Array.isArray(d)
     ) {
-      result[key] = deepMerge(d as Record<string, unknown>, o as Record<string, unknown>);
+      result[key as string] = deepMerge(
+        d as Record<string, unknown>,
+        o as Partial<Record<string, unknown>>,
+      );
     } else if (o !== undefined) {
-      result[key] = o;
+      result[key as string] = o;
     }
   }
 

@@ -9,6 +9,16 @@ import type { CompactionConfig, CompactionResult } from "./types.js";
 import type { Logger } from "./types.js";
 import { estimateTokens } from "./utils.js";
 
+interface GRCCompactionOptions {
+  curatorSummary?: string | null;
+}
+
+interface CompactionDetails {
+  readFiles: string[];
+  modifiedFiles: string[];
+  strategy?: "llm-summary" | "curator-summary";
+}
+
 // =============================================================================
 // Compaction Handler
 // =============================================================================
@@ -21,6 +31,7 @@ export interface CompactionHandler {
   handleCompaction(
     event: SessionBeforeCompactEvent,
     ctx: ExtensionContext,
+    options?: GRCCompactionOptions,
   ): Promise<{ compaction: CompactionResult } | undefined>;
 }
 
@@ -29,14 +40,32 @@ export function createCompactionHandler(config: CompactionConfig, logger: Logger
     async handleCompaction(
       event: SessionBeforeCompactEvent,
       ctx: ExtensionContext,
+      options?: GRCCompactionOptions,
     ): Promise<{ compaction: CompactionResult } | undefined> {
       const { preparation, signal } = event;
-      const { messagesToSummarize, turnPrefixMessages, previousSummary, tokensBefore, firstKeptEntryId } =
+      const { messagesToSummarize, turnPrefixMessages, previousSummary, tokensBefore, firstKeptEntryId, fileOps } =
         preparation;
 
       logger.info(
         `Compaction triggered: ${tokensBefore} tokens, ${messagesToSummarize.length} messages to summarize`,
       );
+
+      const details = buildCompactionDetails(fileOps);
+
+      if (options?.curatorSummary?.trim()) {
+        logger.info("Using curator summary for compaction");
+        return {
+          compaction: {
+            summary: options.curatorSummary.trim(),
+            firstKeptEntryId,
+            tokensBefore,
+            details: {
+              ...details,
+              strategy: "curator-summary",
+            } satisfies CompactionDetails,
+          },
+        };
+      }
 
       // Build conversation text
       const allMessages = [...messagesToSummarize, ...turnPrefixMessages];
@@ -139,6 +168,10 @@ export function createCompactionHandler(config: CompactionConfig, logger: Logger
               summary,
               firstKeptEntryId,
               tokensBefore,
+              details: {
+                ...details,
+                strategy: "llm-summary",
+              } satisfies CompactionDetails,
             },
           };
         } catch (err) {
@@ -249,6 +282,24 @@ function extractToolCalls(content: unknown): Array<{ name: string; args: string 
     }
   }
   return calls;
+}
+
+function buildCompactionDetails(fileOps: {
+  read?: Set<string>;
+  edited?: Set<string>;
+  written?: Set<string>;
+}): CompactionDetails {
+  const modified = new Set<string>();
+  for (const file of fileOps.edited ?? []) modified.add(file);
+  for (const file of fileOps.written ?? []) modified.add(file);
+
+  const readFiles = Array.from(fileOps.read ?? []).filter((file) => !modified.has(file)).sort();
+  const modifiedFiles = Array.from(modified).sort();
+
+  return {
+    readFiles,
+    modifiedFiles,
+  };
 }
 
 function buildConversationText(messages: unknown[]): string {
