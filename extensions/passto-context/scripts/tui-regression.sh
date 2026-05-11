@@ -83,52 +83,40 @@ wait_for_prompt_ready
 capture startup
 assert_log_has "$LOG_DIR/startup.log" "passto-context"
 
-printf '[info] Test 1: /pta status\n'
-send_cmd "/pta status"
-wait_for_pattern pta-status "PTA / GRC Status"
-assert_log_has "$LOG_DIR/pta-status.log" "Manual mode\*\*: auto"
-assert_log_has "$LOG_DIR/pta-status.log" "Current mode\*\*: normal"
+printf '[info] Test 1: /ptc status\n'
+send_cmd "/ptc status"
+wait_for_pattern ptc-status "PasstoContext Runtime Status"
+assert_log_has "$LOG_DIR/ptc-status.log" "Runtime\*\*: on"
+assert_log_has "$LOG_DIR/ptc-status.log" "Current mode\*\*: normal"
 
-printf '[info] Test 2: /pta on\n'
-send_cmd "/pta on"
-wait_for_pattern pta-on "GRC 已强制开启|GRC forced on"
+printf '[info] Test 2: /ptc on\n'
+send_cmd "/ptc on"
+wait_for_pattern ptc-on "PasstoContext 已开启|PTC 已开启"
 sleep 1
-send_cmd "/pta status"
-wait_for_pattern pta-on-status "PTA / GRC Status"
-assert_log_has "$LOG_DIR/pta-on-status.log" "Manual mode\*\*: forced-on"
-assert_log_has "$LOG_DIR/pta-on-status.log" "Current mode\*\*: grc"
+send_cmd "/ptc status"
+wait_for_pattern ptc-on-status "PasstoContext Runtime Status"
+assert_log_has "$LOG_DIR/ptc-on-status.log" "Runtime\*\*: on"
 
-printf '[info] Test 3: /pta off\n'
-send_cmd "/pta off"
-wait_for_pattern pta-off "GRC 已停用|GRC forced off"
+printf '[info] Test 3: /ptc off\n'
+send_cmd "/ptc off"
+wait_for_pattern ptc-off "PasstoContext 已关闭|PTC:off"
 sleep 1
-send_cmd "/pta status"
-wait_for_pattern pta-off-status "PTA / GRC Status"
-assert_log_has "$LOG_DIR/pta-off-status.log" "Manual mode\*\*: forced-off"
-assert_log_has "$LOG_DIR/pta-off-status.log" "Current mode\*\*: normal"
+send_cmd "/ptc status"
+wait_for_pattern ptc-off-status "PasstoContext Runtime Status"
+assert_log_has "$LOG_DIR/ptc-off-status.log" "Runtime\*\*: off"
+assert_log_has "$LOG_DIR/ptc-off-status.log" "Current mode\*\*: normal"
 
-printf '[info] Test 4: /pta reflect under forced-off (should still force-enable and run)\n'
-send_cmd "/pta reflect"
-wait_for_pattern pta-reflect "Reflector 已手动触发|Reflector is already running|Reflector 不可用" 25 1
-sleep 1
-send_cmd "/pta status"
-wait_for_pattern pta-reflect-status "PTA / GRC Status"
-assert_log_has "$LOG_DIR/pta-reflect-status.log" "Manual mode\*\*: forced-on"
-assert_log_has "$LOG_DIR/pta-reflect-status.log" "Current mode\*\*: grc"
+printf '[info] Test 4: /ptc config\n'
+send_cmd "/ptc config"
+wait_for_pattern ptc-config "已打开 PasstoContext 配置文件|打开配置文件失败" 25 1
 
-printf '[info] Test 5: /pta curate\n'
-send_cmd "/pta curate"
-wait_for_pattern pta-curate "Curator 已手动触发|Curator is already running|Curator 不可用" 25 1
-capture pta-curate
-assert_log_has "$LOG_DIR/pta-curate.log" "Curator"
-
-printf '[info] Test 6: /reload persistence\n'
+printf '[info] Test 5: /reload persistence\n'
 run_reload
-send_cmd "/pta status"
-wait_for_pattern post-reload-status "PTA / GRC Status"
-assert_log_has "$LOG_DIR/post-reload-status.log" "Manual mode\*\*: forced-on"
-assert_log_has "$LOG_DIR/post-reload-status.log" "Reflector\*\*: (idle|done|failed)"
-assert_log_has "$LOG_DIR/post-reload-status.log" "Curator\*\*: (idle|done|failed)"
+send_cmd "/ptc status"
+wait_for_pattern post-reload-status "PasstoContext Runtime Status"
+assert_log_has "$LOG_DIR/post-reload-status.log" "Runtime\*\*: off"
+assert_log_has "$LOG_DIR/post-reload-status.log" "Reflector status\*\*: (idle|done|failed)"
+assert_log_has "$LOG_DIR/post-reload-status.log" "Curator status\*\*: (idle|done|failed)"
 
 OLD_SESSION_NAME="$(extract_session_name "$LOG_DIR/post-reload-status.log")"
 if [[ -z "$OLD_SESSION_NAME" ]]; then
@@ -138,15 +126,14 @@ fi
 
 echo "[info] Captured pre-/new session name: $OLD_SESSION_NAME"
 
-printf '[info] Test 7: /new resets session-scoped state\n'
+printf '[info] Test 6: /new resets session-scoped state\n'
 send_cmd "/new"
 wait_for_pattern after-new "New session started|✓ New session started" 25 1
 sleep 2
-send_cmd "/pta status"
-wait_for_pattern after-new-status "PTA / GRC Status"
-assert_log_has "$LOG_DIR/after-new-status.log" "Manual mode\*\*: auto"
+send_cmd "/ptc status"
+wait_for_pattern after-new-status "PasstoContext Runtime Status"
+assert_log_has "$LOG_DIR/after-new-status.log" "Runtime\*\*: on"
 assert_log_has "$LOG_DIR/after-new-status.log" "Current mode\*\*: normal"
-assert_log_has "$LOG_DIR/after-new-status.log" "GRC cycles\*\*: 0"
 
 NEW_SESSION_NAME="$(extract_session_name "$LOG_DIR/after-new-status.log")"
 if [[ -z "$NEW_SESSION_NAME" ]]; then
@@ -160,7 +147,7 @@ fi
 
 echo "[PASS] /new created distinct session: $NEW_SESSION_NAME"
 
-printf '[info] Test 8: /resume dialog is reachable\n'
+printf '[info] Test 7: /resume dialog is reachable\n'
 send_cmd "/resume"
 wait_for_pattern resume-open "Resume Session \(Current Folder\)|No sessions in current folder" 25 1
 assert_log_has "$LOG_DIR/resume-open.log" "Resume Session \(Current Folder\)"
