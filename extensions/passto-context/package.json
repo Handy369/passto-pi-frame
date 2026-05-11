@@ -23,7 +23,7 @@
     "test:midrun": "./scripts/midrun-regression.sh",
     "test:curator": "node --experimental-strip-types --test tests/grc-curator-output.test.ts tests/curator-round-normalization.test.ts tests/curator-prompt-goal-persistence.test.ts tests/curator-goal-guard.test.ts",
     "test:restore": "node --experimental-strip-types --test tests/index-restore-replay.test.ts",
-    "test:reflector": "node --experimental-strip-types --test tests/reflector-input.test.ts tests/grc-goal-view-alignment.test.ts",
+    "test:reflector": "node --experimental-strip-types --test tests/reflector-input.test.ts tests/reflector-grounding.test.ts tests/reflector-assets.test.ts tests/reflector-diagnosis.test.ts tests/reflector-output.test.ts tests/grc-goal-view-alignment.test.ts",
     "test:context-manager": "node --experimental-strip-types --test tests/grc-context-manager.test.ts tests/context-preserves-current-prompt.test.ts",
     "test:compaction": "node --experimental-strip-types --test tests/compaction-handler.test.ts",
     "test:status": "node --experimental-strip-types --test tests/status-without-objective-ledger.test.ts tests/widget-status.test.ts",

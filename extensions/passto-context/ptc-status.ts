@@ -24,6 +24,7 @@ export interface PTCStatusInput {
   filesModifiedCount: number;
   contextUsageLabel?: string | null;
   latestReflectorAdvice?: string | null;
+  latestReflectorDiagnosisLabel?: string | null;
   latestCuratorSummary?: string | null;
   goalStateSnapshot?: {
     active: number;
@@ -63,6 +64,10 @@ export function formatPTCStatus(input: PTCStatusInput): string {
 
   if (input.contextUsageLabel) {
     lines.push(`- **Context usage**: ${input.contextUsageLabel}`);
+  }
+
+  if (input.latestReflectorDiagnosisLabel) {
+    lines.push('', '### Latest Reflector Diagnosis', input.latestReflectorDiagnosisLabel);
   }
 
   if (input.latestReflectorAdvice) {

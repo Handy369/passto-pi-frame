@@ -132,6 +132,7 @@ export interface GRCState {
   reflector: {
     status: SubagentStatus;
     lastAdvice: string | null;
+    lastDiagnosis?: ReflectorDiagnosis | null;
     processedUpToTurn: number; // legacy compatibility
     processedUpToAgentRound: number;
     lastReflectedAgentRound: number;
@@ -170,15 +171,45 @@ export interface ReflectorGoalContext {
   }>;
 }
 
+export type ReflectorDriftSource =
+  | "none"
+  | "goal_state_drift"
+  | "generator_execution_drift"
+  | "curator_misjudgment"
+  | "mixed";
+
+export interface ReflectorDiagnosis {
+  aligned: boolean;
+  driftSource: ReflectorDriftSource;
+  confidence: number;
+  evidence: string[];
+  explanation?: string;
+}
+
+export interface ReflectorAssetCandidate {
+  type: "reference" | "script" | "skill";
+  title: string;
+  rationale: string;
+  evidence: string[];
+  targetPath?: string;
+  scope?: "shared" | "domain";
+  notes?: string;
+}
+
 export interface ReflectorInput {
   currentRoundConversation: string;
   currentGoalState: GoalStateDocument | null;
   goalContext?: ReflectorGoalContext | null;
+  summaryCacheExcerpt?: SummaryEntry[];
+  recentCuratorArtifacts?: CuratorArtifactEntry[];
+  candidatePrinciples?: PrincipleItem[];
 }
 
 export interface ReflectorResult {
   advice: string;
   principleOps: PrincipleOp[];
+  diagnosis?: ReflectorDiagnosis | null;
+  assetCandidates?: ReflectorAssetCandidate[];
   hasSubstantiveContent: boolean;
   sections: {
     direction: string;
@@ -301,6 +332,15 @@ export interface CuratorArtifactEntry {
   signal: GoalStateSignal | null;
 }
 
+export interface ReflectorArtifactEntry {
+  customType: "grc-reflector-artifact";
+  agentRound: number;
+  recordedAt: string;
+  diagnosis: ReflectorDiagnosis | null;
+  advice: string | null;
+  principleOps: PrincipleOp[];
+  assetCandidates?: ReflectorAssetCandidate[];
+}
 
 export interface AgentRoundBoundaryEntry {
   customType: "passto-round-boundary";

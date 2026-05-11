@@ -28,6 +28,7 @@ test('/ptc status keeps converged round-centric fields and includes top-level ru
     filesModifiedCount: 2,
     contextUsageLabel: '4,096 / 128,000 (3%)',
     latestReflectorAdvice: '优先保持 GoalState 焦点一致。',
+    latestReflectorDiagnosisLabel: 'aligned=true, driftSource=none, confidence=0.92, evidence=2',
     latestCuratorSummary: '已完成 P4 测试补强。',
     goalStateSnapshot: {
       active: 2,
@@ -52,6 +53,8 @@ test('/ptc status keeps converged round-centric fields and includes top-level ru
   assert.match(text, /\*\*Last Signal\*\*: advance \(confidence=0\.92\)/);
   assert.match(text, /\*\*Latest Curator Artifact Round\*\*: 5/);
   assert.match(text, /GoalState Snapshot/);
+  assert.match(text, /Latest Reflector Diagnosis/);
+  assert.match(text, /driftSource=none/);
 
   assert.doesNotMatch(text, /Objective/i);
   assert.doesNotMatch(text, /Ledger/i);

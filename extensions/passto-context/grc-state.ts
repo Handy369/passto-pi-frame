@@ -6,7 +6,8 @@
  * Legacy `manualMode` values are only read during restore and mapped into `runtimeMode`.
  */
 
-import type { GRCState, GoalStateDocument, GoalStateSignal, RuntimeMode, SubagentStatus, SummaryEntry } from "./types.js";
+import type { GRCState, GoalStateDocument, GoalStateSignal, ReflectorDiagnosis, RuntimeMode, SubagentStatus, SummaryEntry } from "./types.ts";
+import { normalizeReflectorDiagnosis } from "./grc-reflector-diagnosis.ts";
 
 export function createInitialGRCState(): GRCState {
   return {
@@ -20,6 +21,7 @@ export function createInitialGRCState(): GRCState {
     reflector: {
       status: "idle",
       lastAdvice: null,
+      lastDiagnosis: null,
       processedUpToTurn: 0,
       processedUpToAgentRound: 0,
       lastReflectedAgentRound: 0,
@@ -91,12 +93,14 @@ export function updateReflectorStatus(
   processedUpToTurn?: number,
   processedUpToAgentRound?: number,
   lastReflectedAgentRound?: number,
+  diagnosis?: ReflectorDiagnosis | null,
 ): GRCState {
   return {
     ...state,
     reflector: {
       status,
       lastAdvice: advice !== undefined ? advice : state.reflector.lastAdvice,
+      lastDiagnosis: diagnosis !== undefined ? diagnosis : state.reflector.lastDiagnosis,
       processedUpToTurn: processedUpToTurn ?? state.reflector.processedUpToTurn,
       processedUpToAgentRound: processedUpToAgentRound ?? state.reflector.processedUpToAgentRound,
       lastReflectedAgentRound: lastReflectedAgentRound ?? state.reflector.lastReflectedAgentRound,
@@ -217,6 +221,10 @@ export function restoreGRCState(data: unknown): GRCState {
       lastAdvice: typeof obj.reflector?.lastAdvice === "string" || obj.reflector?.lastAdvice === null
         ? (obj.reflector?.lastAdvice ?? null)
         : initial.reflector.lastAdvice,
+      lastDiagnosis:
+        obj.reflector?.lastDiagnosis === null
+          ? null
+          : normalizeReflectorDiagnosis(obj.reflector?.lastDiagnosis) ?? initial.reflector.lastDiagnosis,
       processedUpToTurn:
         typeof obj.reflector?.processedUpToTurn === "number"
           ? obj.reflector.processedUpToTurn

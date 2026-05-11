@@ -414,3 +414,132 @@ test('restoreGRCState and restoreCuratorStateFromBranchEntries normalize running
   assert.equal(replayed.curator.lastSignal?.type, 'continue');
   assert.deepEqual(replayed.curator.summaryCache.map((item) => item.agentRound), [18]);
 });
+
+test('restoreCuratorStateFromBranchEntries rehydrates latest reflector artifact into lightweight reflector state only', () => {
+  const restoreResult = restoreCuratorStateFromBranchEntries(
+    restoreGRCState({
+      ...createInitialGRCState(),
+      mode: 'grc',
+      reflector: {
+        ...createInitialGRCState().reflector,
+        status: 'idle',
+        lastAdvice: 'older reflector advice',
+      },
+    }),
+    [
+      {
+        type: 'custom',
+        customType: 'grc-reflector-artifact',
+        data: {
+          customType: 'grc-reflector-artifact',
+          agentRound: 20,
+          recordedAt: '2026-05-10T00:00:20.000Z',
+          diagnosis: {
+            aligned: false,
+            driftSource: 'generator_execution_drift',
+            confidence: 0.66,
+            evidence: ['round 20 diagnosis'],
+          },
+          advice: 'round 20 reflector advice',
+          principleOps: [{ op: 'reuse', targetId: 'principle_round20' }],
+          assetCandidates: [
+            {
+              type: 'reference',
+              title: 'Round 20 candidate',
+              rationale: '只是候选。',
+              evidence: ['round 20 asset'],
+            },
+          ],
+        },
+      },
+      {
+        type: 'custom',
+        customType: 'grc-reflector-artifact',
+        data: {
+          customType: 'grc-reflector-artifact',
+          agentRound: 21,
+          recordedAt: '2026-05-10T00:00:21.000Z',
+          diagnosis: {
+            aligned: true,
+            driftSource: 'none',
+            confidence: 0.9,
+            evidence: ['round 21 diagnosis'],
+          },
+          advice: 'round 21 reflector advice',
+          principleOps: [{ op: 'reuse', targetId: 'principle_round21' }],
+          assetCandidates: [
+            {
+              type: 'skill',
+              title: 'Round 21 candidate',
+              rationale: '仍然只是候选。',
+              evidence: ['round 21 asset'],
+            },
+          ],
+        },
+      },
+    ],
+    4,
+  );
+
+  const restored = restoreResult.state;
+  assert.equal(restoreResult.reflectorArtifactsRejected, 0);
+  assert.deepEqual(restoreResult.restoredReflectorArtifactRounds, [20, 21]);
+  assert.equal(restored.reflector.status, 'done');
+  assert.equal(restored.reflector.lastAdvice, 'round 21 reflector advice');
+  assert.deepEqual(restored.reflector.lastDiagnosis, {
+    aligned: true,
+    driftSource: 'none',
+    confidence: 0.9,
+    evidence: ['round 21 diagnosis'],
+  });
+  assert.equal(restored.reflector.processedUpToAgentRound, 21);
+  assert.equal(restored.reflector.lastReflectedAgentRound, 21);
+  assert.equal('assetCandidates' in restored.reflector, false);
+});
+
+test('restoreCuratorStateFromBranchEntries rejects invalid reflector artifacts without mutating reflector state', () => {
+  const restoreResult = restoreCuratorStateFromBranchEntries(
+    restoreGRCState({
+      ...createInitialGRCState(),
+      mode: 'grc',
+      reflector: {
+        ...createInitialGRCState().reflector,
+        status: 'done',
+        lastAdvice: 'baseline reflector advice',
+        lastDiagnosis: {
+          aligned: false,
+          driftSource: 'mixed',
+          confidence: 0.5,
+          evidence: ['baseline diagnosis'],
+        },
+        lastReflectedAgentRound: 12,
+      },
+    }),
+    [
+      {
+        type: 'custom',
+        customType: 'grc-reflector-artifact',
+        data: {
+          customType: 'grc-reflector-artifact',
+          agentRound: 'bad-round',
+          recordedAt: '2026-05-10T00:00:22.000Z',
+          advice: 'should be rejected',
+          principleOps: [],
+        },
+      },
+    ],
+    4,
+  );
+
+  const restored = restoreResult.state;
+  assert.equal(restoreResult.reflectorArtifactsRejected, 1);
+  assert.deepEqual(restoreResult.restoredReflectorArtifactRounds, []);
+  assert.equal(restored.reflector.lastAdvice, 'baseline reflector advice');
+  assert.deepEqual(restored.reflector.lastDiagnosis, {
+    aligned: false,
+    driftSource: 'mixed',
+    confidence: 0.5,
+    evidence: ['baseline diagnosis'],
+  });
+  assert.equal(restored.reflector.lastReflectedAgentRound, 12);
+});

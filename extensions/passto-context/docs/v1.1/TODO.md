@@ -43,8 +43,9 @@
 
 ### 1.3 状态与恢复
 
-- [x] `session_start` 会从 `grc-state` 与 `grc-curator-artifact` 恢复运行态与 Curator 事实态
-- [x] `GoalState / SummaryCache / lastSignal / lastSummaryEntry` 可由 artifact replay 恢复
+- [x] `session_start` 会从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复运行态与 GRC 轻事实态
+- [x] `GoalState / SummaryCache / lastSignal / lastSummaryEntry` 可由 curator artifact replay 恢复
+- [x] `lastAdvice / lastDiagnosis / lastReflectedAgentRound` 可由 reflector artifact replay 恢复
 - [x] round-based 字段已进入主状态链：`currentAgentRound`、`currentTurnRound`、`lastReflectedAgentRound`、`lastCuratedAgentRound`、`processedUpToAgentRound`
 - [x] 旧 `running` 状态在 restore 时会归一化为 `idle`
 
@@ -70,6 +71,8 @@
   - `GoalState Snapshot`
   - `Last Signal`
   - `Latest Curator Artifact Round`
+  - `Latest Reflector Diagnosis`
+  - `Latest Reflector Advice`
 - [x] mid-run Reflector 已具备 `grc-mid-run-debug` 持久化审计链
 
 ---
@@ -92,6 +95,7 @@
 - [x] GoalState 注入与 ReflectorGoalContext 焦点对齐
 - [x] Reflector prompt 包含 goalState / goalContext
 - [x] Curator artifact restore 与 replay
+- [x] Reflector artifact restore 与 replay
 - [x] `session_before_compact` 仅在存在 Curator summary 时接管
 - [x] `/ptc status`（历史阶段原称 `/pta status`）不再依赖 Objective / Ledger
 - [x] round-based 状态字段更新与恢复

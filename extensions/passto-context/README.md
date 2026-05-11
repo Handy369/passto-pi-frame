@@ -31,7 +31,7 @@
 
 - 主调度已切到 **agent-round / post-round**：`agent_end` 后后台启动 Reflector；Curator 在 `before_agent_start` 处理上一轮
 - `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles
-- `agent_start` 会写入 `passto-round-boundary`；`session_start` 会从 `grc-state` 与 `grc-curator-artifact` 恢复运行态与 Curator 事实态（含显式校验与 replay）
+- `agent_start` 会写入 `passto-round-boundary`；`session_start` 会从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复运行态与 GRC 轻事实态（含显式校验与 replay）
 - 支持顶层 `runtimeMode = on | off` 运行态开关，可通过 `/ptc on|off` 切换
 - 长运行单次任务中，当当前 run 内的 `turn-round` 达到 `midRunTurnThreshold` 时，会触发一次 mid-run Reflector，并持久化 `grc-mid-run-debug`
 - Reflector / Curator 通过后台 `complete()` 异步运行，不阻塞主对话
@@ -384,7 +384,7 @@ before_agent_start
     │
     ├─ Curator: previousRoundConversation + currentUserMessage + currentGoalState
     ├─ Curator: summaryEntry + GoalState + signal
-    ├─ session_start: replay grc-curator-artifact 重建事实态
+    ├─ session_start: replay grc-curator-artifact / grc-reflector-artifact 重建轻事实态
     └─ context: 保留最近 N 个 agent-round 原始消息，并注入 GoalState + SummaryCache
 ```
 
@@ -399,9 +399,9 @@ before_agent_start
 - `before_agent_start` 已真实注入 `GoalState + SummaryCache + Reflector advice + principles`
 - `SummaryCache` 注入会自动避开最近 raw rounds，减少重复信息
 - `context` 主路径已改为“最近 agent-round 原始消息 + GoalState/SummaryCache”，并移除了 `lastSummary` 兼容 fallback
-- `grc-curator-artifact` 已落地：Curator 完成后增量持久化，`session_start` 可 replay 恢复 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`，并会记录 rejected artifact 数与恢复后的 cache rounds
-- `grc-curator-artifact` 已作为 Curator 主持久化载体，`session_start` 会恢复 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`
-- artifact 恢复已具备显式校验与观测：会记录 rejected 数、恢复后的 `summaryCacheRounds`、`goalStateRound`
+- `grc-curator-artifact` 已落地：Curator 完成后增量持久化，`session_start` 可 replay 恢复 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`
+- `grc-reflector-artifact` 已落地：Reflector 完成后增量持久化，`session_start` 可 replay 恢复 `lastAdvice / lastDiagnosis / processedUpToAgentRound / lastReflectedAgentRound`
+- artifact 恢复已具备显式校验与观测：会记录 rejected 数、恢复后的 `summaryCacheRounds`、`goalStateRound`、`lastDiagnosis` 与 `lastReflectedRound`
 - principles 会真实落盘到 `~/.passtocontext/memory/principles/principles-registry.json`，治理方式为 `principleOps + registry`
 - `/ptc status` 已收敛为总状态视图：`Runtime`、`Memory / Tracking / Widget / GRC`、`Current agent-round`、`Current turn-round`、`Reflector status`、`Curator status`、`SummaryCache entries`、`GoalState Snapshot`、`Last Signal`、`Latest Curator Artifact Round`
 - Reflector 在“无实质建议”时会记录日志：`Reflector finished (no substantive advice)`
@@ -424,6 +424,7 @@ before_agent_start
 - `npm run test:grc` 已覆盖：
   - Curator 输出解析
   - Curator artifact restore / replay
+  - Reflector artifact restore / replay
   - Reflector 输入与 prompt 注入
   - GoalState 注入与 ReflectorGoalContext 对齐
   - context manager 的 previous-round 切片
@@ -496,6 +497,60 @@ npm run test:midrun
 
 相比只观察 pane 文本，`test:midrun` 以 session jsonl 中的持久化审计 entry 为主判据，更适合稳定回归。`grc-mid-run-debug` 是稳定主证据，`grc-mid-run-reflection-steer` 是否单独落盘取决于当前会话记录形态，因此不作为唯一硬性断言。
 
+## 最小手工验证方案（tmux）
+
+当你修改 `grc-reflector-artifact`、restore/replay、`/ptc status` 或 `Latest Reflector Diagnosis` 相关链路时，建议做一次真实 TUI 手工验证。
+
+### 验证目标
+
+确认以下 5 点：
+
+1. Reflector 完成后会落盘 `grc-reflector-artifact`
+2. artifact 中包含 `diagnosis / advice / principleOps / assetCandidates`
+3. 重启或 `/reload` 后，`session_start` 能 replay 最新 Reflector artifact
+4. `/ptc status` 能显示 `Latest Reflector Diagnosis`，并在有 advice 时显示 `Latest Reflector Advice`
+5. replay 后 `processedUpToAgentRound` 与 `lastReflectedAgentRound` 语义一致，不会出现 latest diagnosis 已恢复但 processed round 落后于 artifact round 的情况
+
+### 建议步骤
+
+1. 新开隔离会话（推荐独立 `session-dir`）
+2. 用 `tmux` 启动真实 Pi：
+
+```bash
+tmux new -s ptc-reflector-verify
+pi --session-dir /tmp/ptc-reflector-verify-session --no-extensions --extension /Users/handy/dev/passto-ai/extensions/passto-context --no-skills
+```
+
+3. 在 Pi 内触发一轮足够具体的任务，让 Reflector 在 `agent_end` 后产出结果
+4. 执行 `/ptc status`，确认出现：
+   - `Reflector status`
+   - `Last reflected round`
+   - `Latest Reflector Diagnosis`
+   - 如有 advice，再确认 `Latest Reflector Advice`
+5. 到 `session-dir` 下找到当前 session 的 `.jsonl`，确认存在：
+
+```bash
+rg '"customType":"grc-reflector-artifact"' /tmp/ptc-reflector-verify-session -n
+```
+
+6. 执行 `/reload`（或退出后重新打开同一 `session-dir`）
+7. 再次执行 `/ptc status`，确认最新 diagnosis/advice 已恢复
+
+### 推荐检查命令
+
+```bash
+rg '"customType":"grc-reflector-artifact"' /tmp/ptc-reflector-verify-session -n
+rg 'Latest Reflector Diagnosis|Latest Reflector Advice' /tmp/ptc-pane.log -n
+```
+
+### 通过标准
+
+- jsonl 中存在 `grc-reflector-artifact`
+- 最新 artifact 的 `agentRound` 与 `/ptc status` 的 `Last reflected round` 一致
+- `/reload` 后 `Latest Reflector Diagnosis` 仍可见
+- replay 后 round 语义一致：`processedUpToAgentRound` 与 `lastReflectedAgentRound` 对齐到最新 artifact round
+- 轻状态未出现历史膨胀迹象（`/ptc status` 只展示 latest，而非历史数组）
+
 ## 常见问题
 
 ### "PasstoContext not initialized"
@@ -543,7 +598,7 @@ passto-context/
 ├── grc-context-manager.ts   # agent-round 边界检测与 context 修剪
 ├── grc-goal-context.ts      # GoalState → ReflectorGoalContext
 ├── grc-goal-view.ts         # GoalState 共享焦点视图模型
-├── grc-restore.ts           # grc-state / curator-artifact 恢复链
+├── grc-restore.ts           # grc-state / curator-artifact / reflector-artifact 恢复链
 ├── ptc-status.ts            # `/ptc status` 文本 formatter
 ├── docs/
 │   └── v1.1/

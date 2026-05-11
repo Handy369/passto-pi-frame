@@ -85,15 +85,18 @@ test('buildReflectorGoalContext derives focus and sibling goals from GoalStateDo
 
 test('buildReflectorSubagentPrompt includes current goal state and goal context payloads', () => {
   const context = buildReflectorGoalContext(goalState);
-  const prompt = buildReflectorSubagentPrompt(
-    '[User]\n请升级 Reflector 输入\n\n[Assistant]\n开始修改',
-    goalState,
-    context,
-  );
+  const prompt = buildReflectorSubagentPrompt({
+    currentRoundConversation: '[User]\n请升级 Reflector 输入\n\n[Assistant]\n开始修改',
+    currentGoalState: goalState,
+    goalContext: context,
+  });
 
   assert.match(prompt, /<current_goal_state>/);
   assert.match(prompt, /<goal_context>/);
   assert.match(prompt, /升级 Reflector 输入契约/);
   assert.match(prompt, /currentGoalState \/ goalContext/);
+  assert.match(prompt, /## 目标对齐判断/);
+  assert.match(prompt, /## 顾问意见/);
+  assert.match(prompt, /"diagnosis"/);
   assert.match(prompt, /"currentFocusGoalId": "g-12"/);
 });

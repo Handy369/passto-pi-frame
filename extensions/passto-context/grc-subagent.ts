@@ -7,9 +7,11 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   buildCuratorSubagentPrompt,
   buildReflectorSubagentPrompt,
-} from "./grc-prompts.js";
+} from "./grc-prompts.ts";
 import { parseCuratorOutput } from "./grc-curator-parser.ts";
 import { normalizeCuratorResultAgentRound } from "./grc-curator-normalizer.ts";
+import { normalizeReflectorAssetCandidates } from "./grc-reflector-assets.ts";
+import { normalizeReflectorDiagnosis } from "./grc-reflector-diagnosis.ts";
 import type {
   CuratorResult,
   GRCConfig,
@@ -18,10 +20,10 @@ import type {
   PrincipleDraft,
   PrincipleItem,
   PrincipleOp,
-  ReflectorGoalContext,
+  ReflectorInput,
   ReflectorResult,
-} from "./types.js";
-import { estimateTokens } from "./utils.js";
+} from "./types.ts";
+import { estimateTokens } from "./utils.ts";
 
 interface SerializeConversationOptions {
   maxTokens: number;
@@ -127,15 +129,13 @@ export function serializeConversation(branch: Array<{ message?: unknown }>, opti
 }
 
 export async function executeReflector(
-  conversation: string,
-  currentGoalState: GoalStateDocument | null,
-  goalContext: ReflectorGoalContext | null,
+  input: ReflectorInput,
   ctx: ExtensionContext,
   config: GRCConfig,
   logger: Logger,
   signal?: AbortSignal,
 ): Promise<ReflectorResult | null> {
-  const prompt = buildReflectorSubagentPrompt(conversation, currentGoalState, goalContext);
+  const prompt = buildReflectorSubagentPrompt(input);
   const raw = await executeTextCompletion(prompt, ctx, config, logger, config.maxReflectorTokens, signal);
   if (!raw) return null;
   return parseReflectorOutput(raw);
@@ -165,18 +165,31 @@ export async function executeCurator(
 
 export function parseReflectorOutput(raw: string): ReflectorResult | null {
   const text = raw.trim();
-  if (!text.includes("## 方向评估") || !text.includes("## 建议")) {
+  const adviceText = stripTrailingJsonCodeBlock(text).trim();
+  const format = detectReflectorFormat(adviceText);
+  if (!format) {
     return null;
   }
 
-  const direction = extractSection(text, "方向评估");
-  const blindSpots = extractListSection(text, "盲点");
-  const risks = extractListSection(text, "风险");
-  const suggestions = extractListSection(text, "建议");
+  const sections = format === "v2"
+    ? {
+        direction: extractSection(adviceText, "目标对齐判断"),
+        blindSpots: extractListSection(adviceText, "偏移归因"),
+        risks: extractListSection(adviceText, "原则判断"),
+        suggestions: extractListSection(adviceText, "顾问意见"),
+      }
+    : {
+        direction: extractSection(adviceText, "方向评估"),
+        blindSpots: extractListSection(adviceText, "盲点"),
+        risks: extractListSection(adviceText, "风险"),
+        suggestions: extractListSection(adviceText, "建议"),
+      };
 
-  const substantiveBlindSpots = blindSpots.filter((item) => !isExplicitEmptyReflectorItem(item));
-  const substantiveRisks = risks.filter((item) => !isExplicitEmptyReflectorItem(item));
-  const substantiveSuggestions = suggestions.filter((item) => !isExplicitEmptyReflectorItem(item));
+  const substantiveBlindSpots = sections.blindSpots.filter((item) => !isExplicitEmptyReflectorItem(item));
+  const substantiveRisks = sections.risks.filter((item) => !isExplicitEmptyReflectorItem(item));
+  const substantiveSuggestions = sections.suggestions.filter((item) => !isExplicitEmptyReflectorItem(item));
+  const diagnosis = extractReflectorDiagnosis(text);
+  const assetCandidates = extractReflectorAssetCandidates(text);
 
   const hasSubstantiveContent =
     substantiveSuggestions.length > 0 ||
@@ -184,15 +197,12 @@ export function parseReflectorOutput(raw: string): ReflectorResult | null {
     substantiveBlindSpots.length > 0;
 
   return {
-    advice: stripTrailingPrincipleOpsBlock(text).trim(),
+    advice: adviceText,
     principleOps: extractPrincipleOps(text),
+    diagnosis,
+    assetCandidates,
     hasSubstantiveContent,
-    sections: {
-      direction,
-      blindSpots,
-      risks,
-      suggestions,
-    },
+    sections,
   };
 }
 
@@ -327,16 +337,9 @@ function escapeRegExp(value: string): string {
 }
 
 function extractPrincipleOps(text: string): PrincipleOp[] {
-  const match = text.match(/```json\s*([\s\S]*?)```\s*$/);
-  if (!match) return [];
-
-  try {
-    const parsed = JSON.parse(match[1].trim()) as { principleOps?: unknown };
-    if (!Array.isArray(parsed.principleOps)) return [];
-    return parsed.principleOps.map(parsePrincipleOp).filter((item): item is PrincipleOp => !!item).slice(0, 3);
-  } catch {
-    return [];
-  }
+  const parsed = extractTrailingReflectorJson(text);
+  if (!parsed || !Array.isArray(parsed.principleOps)) return [];
+  return parsed.principleOps.map(parsePrincipleOp).filter((item): item is PrincipleOp => !!item).slice(0, 3);
 }
 
 function parsePrincipleOp(raw: unknown): PrincipleOp | null {
@@ -378,8 +381,40 @@ function parsePrincipleDraft(raw: unknown): PrincipleDraft | null {
   };
 }
 
-function stripTrailingPrincipleOpsBlock(text: string): string {
+function stripTrailingJsonCodeBlock(text: string): string {
   return text.replace(/\n?```json\s*[\s\S]*?```\s*$/, "").trim();
+}
+
+function detectReflectorFormat(text: string): "v1" | "v2" | null {
+  if (text.includes("## 目标对齐判断") && text.includes("## 顾问意见")) {
+    return "v2";
+  }
+  if (text.includes("## 方向评估") && text.includes("## 建议")) {
+    return "v1";
+  }
+  return null;
+}
+
+function extractTrailingReflectorJson(text: string): Record<string, unknown> | null {
+  const match = text.match(/```json\s*([\s\S]*?)```\s*$/);
+  if (!match) return null;
+
+  try {
+    const parsed = JSON.parse(match[1].trim());
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+function extractReflectorDiagnosis(text: string) {
+  const parsed = extractTrailingReflectorJson(text);
+  return normalizeReflectorDiagnosis(parsed?.diagnosis);
+}
+
+function extractReflectorAssetCandidates(text: string) {
+  const parsed = extractTrailingReflectorJson(text);
+  return normalizeReflectorAssetCandidates(parsed?.assetCandidates);
 }
 
 function isExplicitEmptyReflectorItem(text: string): boolean {

@@ -36,8 +36,10 @@ import {
 import { buildBaseGRCPrompt, buildGoalStateInjection, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
 import { buildReflectorGoalContext } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
+import { formatReflectorDiagnosisLabel } from "./grc-reflector-diagnosis.ts";
+import { buildReflectorInput } from "./grc-reflector-input.ts";
 import { createPrinciplesManager, formatPrinciplesForInjection } from "./grc-principles.js";
-import { parseCuratorArtifactEntry, restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
+import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
 import { formatPTCStatus } from "./ptc-status.ts";
 import { appendWidgetNotice, getVisibleWidgetNotice, type WidgetNoticeState } from "./widget-status.ts";
@@ -51,7 +53,7 @@ import {
   serializeCurrentAgentRoundConversation,
   serializePreviousAgentRoundConversation,
 } from "./grc-context-manager.js";
-import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, SessionState } from "./types.js";
+import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, ReflectorArtifactEntry, SessionState } from "./types.js";
 
 // =============================================================================
 // Module State (module-level singleton for the extension lifetime)
@@ -199,6 +201,14 @@ function appendCuratorArtifactEntry(pi: ExtensionAPI, entry: CuratorArtifactEntr
     pi.appendEntry("grc-curator-artifact", entry);
   } catch (err) {
     logger?.warn("Failed to persist grc-curator-artifact entry:", err);
+  }
+}
+
+function appendReflectorArtifactEntry(pi: ExtensionAPI, entry: ReflectorArtifactEntry): void {
+  try {
+    pi.appendEntry("grc-reflector-artifact", entry);
+  } catch (err) {
+    logger?.warn("Failed to persist grc-reflector-artifact entry:", err);
   }
 }
 
@@ -546,6 +556,15 @@ export default function (pi: ExtensionAPI) {
     });
     const reflectorGoalState = grcState.curator.lastGoalState;
     const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
+    const reflectorInput = buildReflectorInput({
+      currentRoundConversation: conversation,
+      currentGoalState: reflectorGoalState,
+      goalContext: reflectorGoalContext,
+      summaryCache: grcState.curator.summaryCache,
+      branchEntries: ctx.sessionManager.getBranch().map((entry) => entry.message as { type?: string; customType?: string; data?: unknown }),
+      principlesManager: principles,
+      principleQuery: conversation,
+    });
 
     if (!conversation.trim()) {
       logger?.warn("Skipped mid-run Reflector: empty serialized conversation");
@@ -571,13 +590,32 @@ export default function (pi: ExtensionAPI) {
     grcState = updateReflectorStatus(grcState, "running");
     refreshWidget(ctx);
 
-    reflectorPromise = executeReflector(conversation, reflectorGoalState, reflectorGoalContext, ctx, config.grc, logger)
+    reflectorPromise = executeReflector(reflectorInput, ctx, config.grc, logger)
       .then((result) => {
         if (!grcState || !sessionActive || generation !== sessionGeneration || !isRuntimeEnabled()) return;
         const processedUserTurns = Math.max(grcState.reflector.processedUpToTurn, userTurnAtStart);
         const processedAgentRound = Math.max(grcState.reflector.processedUpToAgentRound, agentRoundAtStart);
         if (!result || !result.hasSubstantiveContent) {
-          grcState = updateReflectorStatus(grcState, "done", null, processedUserTurns, processedAgentRound, agentRoundAtStart);
+          grcState = updateReflectorStatus(
+            grcState,
+            "done",
+            null,
+            processedUserTurns,
+            processedAgentRound,
+            agentRoundAtStart,
+            result?.diagnosis ?? null,
+          );
+          if (result) {
+            appendReflectorArtifactEntry(pi, {
+              customType: "grc-reflector-artifact",
+              agentRound: agentRoundAtStart,
+              recordedAt: new Date().toISOString(),
+              diagnosis: result.diagnosis ?? null,
+              advice: null,
+              principleOps: result.principleOps,
+              assetCandidates: result.assetCandidates ?? [],
+            });
+          }
           reflectorStartedAt = null;
           appendMidRunDebugEntry(pi, {
             phase: "finished-no-advice",
@@ -592,13 +630,30 @@ export default function (pi: ExtensionAPI) {
             processedUpToUserTurn: processedUserTurns,
           });
           logger?.debug(
-            `Mid-run Reflector finished (no substantive advice, runTurn=${runTurnAtStart}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`,
+            `Mid-run Reflector finished (no substantive advice, runTurn=${runTurnAtStart}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result?.diagnosis) ?? "none"}, assetCandidates=${result?.assetCandidates?.length ?? 0})`,
           );
           refreshWidget(ctx);
           return;
         }
 
-        grcState = updateReflectorStatus(grcState, "done", result.advice, processedUserTurns, processedAgentRound, agentRoundAtStart);
+        grcState = updateReflectorStatus(
+          grcState,
+          "done",
+          result.advice,
+          processedUserTurns,
+          processedAgentRound,
+          agentRoundAtStart,
+          result.diagnosis ?? null,
+        );
+        appendReflectorArtifactEntry(pi, {
+          customType: "grc-reflector-artifact",
+          agentRound: agentRoundAtStart,
+          recordedAt: new Date().toISOString(),
+          diagnosis: result.diagnosis ?? null,
+          advice: result.advice,
+          principleOps: result.principleOps,
+          assetCandidates: result.assetCandidates ?? [],
+        });
         reflectorStartedAt = null;
 
         if (!currentRun.active) {
@@ -661,7 +716,7 @@ export default function (pi: ExtensionAPI) {
           adviceChars: result.advice.length,
         });
         setTransientGRCStatus(ctx, "运行中反思已注入");
-        logger?.debug(`Mid-run Reflector delivered via steer (runTurn=${runTurnAtStart}, adviceChars=${result.advice.length}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`);
+        logger?.debug(`Mid-run Reflector delivered via steer (runTurn=${runTurnAtStart}, adviceChars=${result.advice.length}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result.diagnosis) ?? "none"}, assetCandidates=${result.assetCandidates?.length ?? 0})`);
         refreshWidget(ctx);
       })
       .catch((err) => {
@@ -751,6 +806,15 @@ export default function (pi: ExtensionAPI) {
     const previousAgentRoundMessageCount = getPreviousAgentRoundEntries(branch).length;
     const reflectorGoalState = grcState.curator.lastGoalState;
     const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
+    const reflectorInput = buildReflectorInput({
+      currentRoundConversation: reflectorConversation,
+      currentGoalState: reflectorGoalState,
+      goalContext: reflectorGoalContext,
+      summaryCache: grcState.curator.summaryCache,
+      branchEntries: branch.map((entry) => entry.message as { type?: string; customType?: string; data?: unknown }),
+      principlesManager: principles,
+      principleQuery: reflectorConversation,
+    });
 
     logger?.debug(
       `Preparing GRC background jobs (targets=${targets}, generation=${generation}, currentAgentRound=${currentAgentRound}, targetPreviousAgentRound=${targetPreviousAgentRound}, turnRound=${grcState.currentTurnRound}, userTurns=${userTurnAtStart}, mode=${grcState.mode}, runtimeMode=${grcState.runtimeMode}, reflectorConversationChars=${reflectorConversation.length}, previousRoundConversationChars=${previousRoundConversation.length}, previousAgentRoundMessages=${previousAgentRoundMessageCount}, currentUserMessageChars=${currentUserMessage.length}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`,
@@ -776,21 +840,57 @@ export default function (pi: ExtensionAPI) {
       reflectorStartedAt = Date.now();
       grcState = updateReflectorStatus(grcState, "running");
       refreshWidget(ctx);
-      reflectorPromise = executeReflector(reflectorConversation, reflectorGoalState, reflectorGoalContext, ctx, config.grc, logger)
+      reflectorPromise = executeReflector(reflectorInput, ctx, config.grc, logger)
         .then((result) => {
           if (!grcState || !sessionActive || generation !== sessionGeneration || !isRuntimeEnabled()) return;
           const processedUserTurns = Math.max(grcState.reflector.processedUpToTurn, userTurnAtStart);
           const processedAgentRound = Math.max(grcState.reflector.processedUpToAgentRound, currentAgentRound);
           if (!result || !result.hasSubstantiveContent) {
-            grcState = updateReflectorStatus(grcState, "done", null, processedUserTurns, processedAgentRound, currentAgentRound);
+            grcState = updateReflectorStatus(
+              grcState,
+              "done",
+              null,
+              processedUserTurns,
+              processedAgentRound,
+              currentAgentRound,
+              result?.diagnosis ?? null,
+            );
+            if (result) {
+              appendReflectorArtifactEntry(pi, {
+                customType: "grc-reflector-artifact",
+                agentRound: currentAgentRound,
+                recordedAt: new Date().toISOString(),
+                diagnosis: result.diagnosis ?? null,
+                advice: null,
+                principleOps: result.principleOps,
+                assetCandidates: result.assetCandidates ?? [],
+              });
+            }
             reflectorStartedAt = null;
-            logger?.debug(`Reflector finished (no substantive advice, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`);
+            logger?.debug(`Reflector finished (no substantive advice, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result?.diagnosis) ?? "none"}, assetCandidates=${result?.assetCandidates?.length ?? 0})`);
             refreshWidget(ctx);
             return;
           }
-          grcState = updateReflectorStatus(grcState, "done", result.advice, processedUserTurns, processedAgentRound, currentAgentRound);
+          grcState = updateReflectorStatus(
+            grcState,
+            "done",
+            result.advice,
+            processedUserTurns,
+            processedAgentRound,
+            currentAgentRound,
+            result.diagnosis ?? null,
+          );
+          appendReflectorArtifactEntry(pi, {
+            customType: "grc-reflector-artifact",
+            agentRound: currentAgentRound,
+            recordedAt: new Date().toISOString(),
+            diagnosis: result.diagnosis ?? null,
+            advice: result.advice,
+            principleOps: result.principleOps,
+            assetCandidates: result.assetCandidates ?? [],
+          });
           reflectorStartedAt = null;
-          logger?.debug(`Reflector finished (adviceChars=${result.advice.length}, principleOps=${result.principleOps.length}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`);
+          logger?.debug(`Reflector finished (adviceChars=${result.advice.length}, principleOps=${result.principleOps.length}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result.diagnosis) ?? "none"}, assetCandidates=${result.assetCandidates?.length ?? 0})`);
 
           if (result.principleOps.length > 0) {
             void principles
@@ -952,8 +1052,6 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Restore any persisted state from previous session
-      const curatorArtifacts: CuratorArtifactEntry[] = [];
-      let curatorArtifactsRejected = 0;
       for (const entry of ctx.sessionManager.getBranch()) {
         if (entry.type === "custom" && entry.customType === "passto-context-state") {
           const data = entry.data as Parameters<ReturnType<typeof createContextTracker>["restore"]>[0] | undefined;
@@ -964,15 +1062,6 @@ export default function (pi: ExtensionAPI) {
 
         if (entry.type === "custom" && entry.customType === "grc-state") {
           grcState = restoreGRCState(entry.data);
-        }
-
-        if (entry.type === "custom" && entry.customType === "grc-curator-artifact") {
-          const parsed = parseCuratorArtifactEntry(entry.data);
-          if (parsed) {
-            curatorArtifacts.push(parsed);
-          } else {
-            curatorArtifactsRejected += 1;
-          }
         }
 
       }
@@ -987,15 +1076,24 @@ export default function (pi: ExtensionAPI) {
 
       const restoreResult = restoreCuratorStateFromBranchEntries(grcState, ctx.sessionManager.getBranch() as Array<{ type?: string; customType?: string; data?: unknown }>, config.grc.summaryCacheSize);
       grcState = restoreResult.state;
-      curatorArtifactsRejected = restoreResult.curatorArtifactsRejected;
       if (restoreResult.restoredCuratorArtifactRounds.length > 0) {
         const restoredRounds = restoreResult.restoredCuratorArtifactRounds.join(",");
         const goalStateRound = grcState.curator.lastGoalState?.agentRound ?? "none";
         logger?.info(
-          `Restored ${restoreResult.restoredCuratorArtifactRounds.length} curator artifacts from branch history (rejected=${curatorArtifactsRejected}, summaryCacheRounds=${restoredRounds}, goalStateRound=${goalStateRound})`,
+          `Restored ${restoreResult.restoredCuratorArtifactRounds.length} curator artifacts from branch history (rejected=${restoreResult.curatorArtifactsRejected}, summaryCacheRounds=${restoredRounds}, goalStateRound=${goalStateRound})`,
         );
-      } else if (curatorArtifactsRejected > 0) {
-        logger?.warn(`Skipped ${curatorArtifactsRejected} invalid curator artifacts during restore`);
+      } else if (restoreResult.curatorArtifactsRejected > 0) {
+        logger?.warn(`Skipped ${restoreResult.curatorArtifactsRejected} invalid curator artifacts during restore`);
+      }
+
+      if (restoreResult.restoredReflectorArtifactRounds.length > 0) {
+        const restoredRounds = restoreResult.restoredReflectorArtifactRounds.join(",");
+        const diagnosisLabel = formatReflectorDiagnosisLabel(grcState.reflector.lastDiagnosis) ?? "none";
+        logger?.info(
+          `Restored ${restoreResult.restoredReflectorArtifactRounds.length} reflector artifacts from branch history (rejected=${restoreResult.reflectorArtifactsRejected}, reflectedRounds=${restoredRounds}, lastDiagnosis=${diagnosisLabel}, lastReflectedRound=${grcState.reflector.lastReflectedAgentRound})`,
+        );
+      } else if (restoreResult.reflectorArtifactsRejected > 0) {
+        logger?.warn(`Skipped ${restoreResult.reflectorArtifactsRejected} invalid reflector artifacts during restore`);
       }
 
 
@@ -1554,6 +1652,7 @@ export default function (pi: ExtensionAPI) {
       sessionTurnCount: state?.turnCount ?? 0,
       filesModifiedCount: state?.filesModified.length ?? 0,
       latestReflectorAdvice: grcState.reflector.lastAdvice,
+      latestReflectorDiagnosisLabel: formatReflectorDiagnosisLabel(grcState.reflector.lastDiagnosis),
       latestCuratorSummary: grcState.curator.lastSummary,
       goalStateSnapshot: grcState.curator.lastGoalState
         ? {

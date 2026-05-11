@@ -80,8 +80,9 @@ v1.1 的目标不是维护一套越来越复杂的需求账本，而是把当前
 职责：
 - 加载配置
 - 初始化 memory / tracker / principles / compaction handler
-- 从 `grc-state` 与 `grc-curator-artifact` 恢复状态
+- 从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复状态
 - 恢复 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`
+- 恢复 `lastAdvice / lastDiagnosis / lastReflectedAgentRound`
 
 ### 4.2 before_agent_start
 
@@ -125,10 +126,16 @@ Reflector 输入：
 - `currentRoundConversation`
 - `currentGoalState`
 - `goalContext`
+- `summaryCacheExcerpt`
+- `recentCuratorArtifacts`
+- `candidatePrinciples`
 
 Reflector 输出：
 - `advice`
+- `diagnosis`
 - `principleOps`
+- `assetCandidates`
+- `grc-reflector-artifact`（持久化后供 restore / replay）
 
 ### 4.6 session_before_compact
 
@@ -204,8 +211,15 @@ v1.1 最终实现中：
 Reflector：
 - `status`
 - `lastAdvice`
+- `lastDiagnosis`
 - `processedUpToAgentRound`
 - `lastReflectedAgentRound`
+
+Reflector 轻状态恢复口径：
+- `grc-reflector-artifact` 在 `session_start` / `/reload` 时只 replay latest 轻状态视图
+- 不把历史 artifact 数组回填进 `GRCState`
+- latest artifact replay 后，`processedUpToAgentRound` 与 `lastReflectedAgentRound` 必须同时对齐到该 artifact 的 `agentRound`
+- `/ptc status` 只展示 latest diagnosis / advice 等观测结果，而不是历史列表
 
 Curator：
 - `status`
@@ -247,6 +261,8 @@ Curator：
 - SummaryCache entries
 - last signal
 - latest curator artifact round
+- latest reflector diagnosis
+- latest reflector advice
 - GoalState snapshot
 - principles stored
 - orchestrator guard
@@ -268,6 +284,8 @@ Curator：
 
 - Curator 输出解析
 - Curator artifact restore
+- Reflector artifact restore
+- Reflector latest diagnosis replay（含 `processedUpToAgentRound` / `lastReflectedAgentRound` 对齐语义）
 - Reflector 输入与 prompt 注入
 - GoalState 注入与 ReflectorGoalContext 对齐
 - previous-round slicing

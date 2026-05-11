@@ -19,7 +19,8 @@
 - `SummaryCache` 已支持 FIFO、去重最近 raw rounds、注入诊断与 overflow eviction 日志
 - `context` 主路径已转向“最近 N 个 agent-round 原始消息 + GoalState/SummaryCache”，同时保留 `lastSummary` fallback
 - `grc-curator-artifact` 已落地：Curator 完成后 append，`session_start` 时 replay 重建事实态
-- artifact 恢复已具备显式校验与观测（rejected 数、summaryCacheRounds、goalStateRound）
+- `grc-reflector-artifact` 已落地：Reflector 完成后 append，`session_start` 时 replay 恢复最新轻状态
+- artifact 恢复已具备显式校验与观测（rejected 数、summaryCacheRounds、goalStateRound、lastDiagnosis、lastReflectedRound）
 - `/ptc status`（当时命名为 `/pta status`）已展示 `SummaryCache entries`、`Injected SummaryCache rounds`、`Latest Curator Artifact Round`、`Objective Snapshot`、`Requirement Ledger`、`GoalState Snapshot`、`Last Signal`
 - `scripts/tui-regression.sh` 与 `scripts/midrun-regression.sh` 已通过
 
@@ -37,7 +38,7 @@
 已实现部分主要集中在：
 - GoalState / SummaryCache 结构化上下文
 - agent-round 边界
-- Curator artifact 持久化与恢复
+- Curator / Reflector artifact 持久化与恢复
 - 运行观测与诊断补全
 
 ---
