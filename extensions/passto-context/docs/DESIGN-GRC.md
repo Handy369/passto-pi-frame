@@ -1,6 +1,8 @@
-# PasstoContext GRC 框架集成设计方案
+# PasstoContext 运行时架构集成设计方案
 
-> 版本: v1.2 | 日期: 2026-05-07
+> ⚠️ 命名映射：本文包含较多历史术语。阅读当前实现时，请将 `/pta` 视为 `/ptc`，将 `manualMode / forced-on / forced-off` 视为已迁移到顶层 `runtimeMode` 的旧兼容概念。
+>
+> 版本: v1.2（已按 2026-05-09 代码现状同步） | 日期: 2026-05-09
 > 目标: 将 GRC (Generator-Reflector-Curator) 的 GRC 三元认知循环融入 passto-context，
 > 通过 Pi CLI Extension 机制实现自动化的上下文管理升级。
 
@@ -54,9 +56,9 @@ Generator 增强的三个层面：
 2. 上下文层（context hook → messages 修剪）
    │  每次 LLM 调用前重塑它"看到"的对话
    │
-   └── Curator 摘要替换旧 turn
+   └── Curator 摘要替换较早的历史记录
        → LLM 看到的不是 50 条零散消息，而是
-         [结构化摘要] + [最近 4 轮完整对话]
+         [结构化摘要] + [最近若干段完整历史记录]
        → 关键信息不会因为 token 限制被截断
        → 目标、决策、文件变更始终可见
 
@@ -71,9 +73,87 @@ Generator 增强的三个层面：
 **这三层不是割裂的，而是协同的**：
 - steer 让 Generator 产出一段反思 → 这段反思被 Reflector 和 Curator 读到 → 提升 R/C 的分析质量
 - Reflector 的意见注入 systemPrompt → Generator 下次回答时考虑这些意见 → 修正方向
-- Curator 的摘要替换旧 turn → Generator 看到的上下文更聚焦 → 减少跑偏
+- Curator 的摘要替换较早的历史记录 → Generator 看到的上下文更聚焦 → 减少跑偏
 
-### 1.5 三个角色的分工
+### 1.5 术语统一（按 Pi 原生生命周期重新校正）
+
+为避免把 passto-context 的设计建立在错误抽象上，后续文档统一以 **Pi 原生事件模型** 为准。
+
+#### 1.5.1 Pi 原生生命周期（本节术语的前提）
+
+一次 Pi 会话中的典型流程可概括为：
+
+- `session_start`
+- `session.prompt("...")`，等待用户输入本轮初始意图
+- `input` 事件（扩展可在此做本地、非 LLM 的输入转换/处理）
+- 进入 `prompt()` 对应的 agent 事件序列：
+  - `before_agent_start`
+  - `agent_start`
+  - `turn_start`
+  - `message_start / message_update* / message_end`
+  - `tool_execution_start / tool_execution_update* / tool_execution_end`
+  - `turn_end`
+  - 重复若干个 `turn_start -> ... -> turn_end`
+  - `agent_end`
+
+其中需要特别校正两点：
+
+- **`before_agent_start`** 属于一次 `prompt()` / agent 运行开始前的初始化干预点，适合做 system prompt 增强、上下文整理、原则注入等。
+- **`steer` / `followUp` 都会表现为后续的 user message**，但它们不是“新的 prompt-round 起点”：
+  - `steer`：在**当前 assistant turn 完成工具执行后、下一次 LLM 调用前**投递，用于运行中的即时干预。
+  - `followUp`：在**当前 agent 工作收尾后**再投递，用于对本次 prompt 的后续补充、收尾或弥补。
+
+#### 1.5.2 统一术语
+
+- **弃用：`user-turn`**
+  - 不再把 user message 直接当作 passto-context 的生命周期单位。
+  - 原因：在 Pi 中，一个 `prompt()` / agent 生命周期内，除了用户的初始输入外，还可能插入 `steer` 与 `followUp` 形成额外的 user message；因此“user message 数量”不能稳定代表一次完整任务轮次。
+
+- **prompt-round**
+  - 定义：从一次 `session.prompt(用户初始意图)` 开始，到该次处理最终完成为止的生命周期。
+  - 作用：
+    - 表示“用户初始意图 → Pi 接收 → agent 完成”的完整外层交互单位。
+    - 包含 `input` 事件，因此可承载本地、非 LLM 的输入转换/预处理。
+    - 包含 `before_agent_start`，因此可作为 passto-context 在 agent 运行前统一做上下文管理与增强的入口。
+
+- **agent-round**
+  - 定义：一次 `agent_start -> agent_end` 的生命周期，是 agent 执行的外循环。
+  - 作用：
+    - 表示一次完整的 agent 运行周期。
+    - 在该周期内，可以通过 `followUp` 方式补充 user message，使 agent 在原本收尾后继续追加 turn，用于收尾、补充、复核或弥补。
+    - 也可以在该周期内通过 `steer` 插入 user message，对运行中方向进行纠偏。
+
+- **turn-round**
+  - 定义：一次 `turn_start -> turn_end` 的生命周期，是 agent 执行的内循环。
+  - 作用：
+    - 表示一次 LLM 生成 + 对应工具调用与结果回流的完整内循环。
+    - 当满足条件时，可以在 turn-round 之间通过 `steer` 注入 user message，对当前 agent-round 进行“运行中”干预。
+    - 适合作为“运行中卡住检测”“工具调用纠偏”“运行中反思”这类机制的计数单位。
+
+- **message（消息层）**
+  - 指单条 user / assistant / toolResult 消息对象本身。
+  - 其中：
+    - 第一个 turn 中出现的 user message，通常对应本次 `prompt-round` 的初始意图。
+    - 后续 turn 中出现的 user message，可能来自 `steer` 或 `followUp`，属于 Pi 的运行期消息注入，而不应再被误称为新的“用户轮次”。
+
+#### 1.5.3 后续显示与计数建议
+
+> 本节只统一术语，不在此处强行绑定具体实现字段。
+
+建议后续所有统计项都显式标明自己对应的层级：
+
+- `prompt-round`：用于描述“用户一次初始请求到完成”的外层交互单位
+- `agent-round`：用于描述一次 `agent_start -> agent_end`
+- `turn-round`：用于描述一次 `turn_start -> turn_end`
+- `message`：仅用于消息层观察，不再作为 GRC 生命周期主计数单位
+
+如需在 widget 或状态页中显示指标，应直接写清楚是：
+
+- 当前 agent-round 内的 `turn-round` 数
+- 距离上次上下文修剪/摘要基线过去了多少个 `prompt-round` 或 `agent-round`
+- 当前运行态新增的 `steer` / `followUp` 是否已经介入
+
+### 1.6 三个角色的分工
 
 | 角色 | 执行者 | 何时生效 | 通过什么机制 | 核心作用 |
 |------|--------|---------|-------------|----------|
@@ -100,40 +180,45 @@ Pi Session 生命周期
 ├── session_start
 │   ├── 加载配置
 │   ├── 初始化 GRC 状态机
-│   ├── 从 appendEntry 恢复 GRC 状态
-│   └── 加载全局 principles
+│   ├── 从 appendEntry 恢复 `grc-state`
+│   ├── 回放 `grc-curator-artifact`，重建 GoalState / SummaryCache / lastSignal
+│   ├── 对 artifact 做显式校验（agentRound / recordedAt / processedUpToUserTurn）
+│   ├── 加载 principles registry
+│   └── 初始化 widget / currentRun / orchestrator guard 运行态
 │
-├── before_agent_start （每次用户提问）
-│   ├── 如 manualMode != forced-off → 注入轻量 GRC 框架指令到 systemPrompt
-│   ├── 如 manualMode != forced-off → 注入相关 principles
+├── before_agent_start （每次 prompt-round / agent-round 开始前）
+│   ├── 如当前 runtime 未关闭（历史兼容条件为非 `forced-off`）且未让行 → 注入轻量 GRC 框架指令到 systemPrompt
+│   ├── 注入 GoalStateDocument
+│   ├── 注入去重后的 SummaryCache
 │   ├── 如有 Reflector 顾问意见 → 注入 systemPrompt
-│   └── 不直接注入 Curator 摘要（Curator 主要通过 context hook 生效）
+│   └── 如当前 runtime 未关闭（历史兼容条件为非 `forced-off`）且未让行 → 注入当前可注入 principles
 │
 ├── context （每次 LLM 调用前）
-│   └── 如 Curator 已产出摘要 → 修剪旧 turn（LLM 视角）
-│       保留: [Curator摘要] + [最近 N 个 turn 完整记录]
+│   └── 优先保留最近 N 个 agent-round 原始消息；必要时再走 legacy curator summary fallback
+│
+├── agent_start
+│   ├── 打开 currentRun，开始统计单次 agent-round 内部的 turn-round
+│   └── 写入 `passto-round-boundary`
 │
 ├── turn_end
-│   ├── turn 计数器 ++
-│   ├── 更新 context-tracker
-│   ├── 检查是否达到 GRC 触发阈值
-│   │   └── 如果达到:
-│   │       ├── (1) steer 注入反思引导 prompt 到主对话
-│   │       ├── (2) 后台 Reflector: complete() 异步调用
-│   │       └── (3) 后台 Curator: complete() 异步调用
-│   └── 更新 status/widget
+│   ├── 更新 context-tracker（外层交互计数语义）
+│   ├── 更新 widget
+│   ├── currentRun.turnCount ++（turn-round 计数）
+│   └── 若单次 agent-round 达到 `midRunTurnThreshold` → 触发 mid-run Reflector
 │
 ├── agent_end
-│   └── 更新 tracking 状态
+│   ├── 完成当前 agent-round 计数
+│   ├── 后台启动 Reflector
+│   ├── 按 `curatorEveryAgentRounds` 决定是否启动 Curator
+│   └── Curator 成功后写入 `grc-curator-artifact`
 │
 ├── session_before_compact （Pi 原生 compact 触发时）
-│   └── 触发"原则提取"（从即将被压缩的消息中）
-│       不做常规摘要压缩（Curator 已经在管理上下文大小）
-│       返回 Curator 最新摘要作为 compact 结果
+│   └── 优先使用 Curator 最新摘要作为 compact 结果
+│       若未满足条件则回退默认 compact 路径
 │
 └── session_shutdown
-    ├── 持久化 GRC 状态到 appendEntry
-    ├── 提取本会话新增 principles → 全局文件
+    ├── 持久化 `grc-state`
+    ├── 对 principles registry 执行上限清理
     └── 清理资源
 ```
 
@@ -141,7 +226,7 @@ Pi Session 生命周期
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ 普通模式 (turn < 阈值)                           │
+│ 普通模式 (外层轮次尚未达到阈值)                    │
 │                                                 │
 │  before_agent_start: 注入基础 GRC + principles   │
 │  context: 不修剪（直通）                          │
@@ -149,14 +234,14 @@ Pi Session 生命周期
 │  compact: 默认 passto-context 行为               │
 │  status: 只显示基础信息                           │
 │                                                 │
-├─────────────── turn >= 阈值 ────────────────────┤
+├──────────── 外层轮次达到阈值后进入 GRC ───────────┤
 │                                                 │
-│ GRC 模式 (当前实现支持 forced-on / forced-off)     │
+│ GRC 模式（当前公开控制面已收敛到 runtime on/off；历史兼容层曾支持 forced-on / forced-off） │
 │                                                 │
 │  before_agent_start: 注入 GRC + principles       │
 │                      + Reflector 顾问意见         │
 │                      + Curator 增强提示           │
-│  context: Curator 修剪旧 turn                    │
+│  context: Curator 修剪较早的历史记录              │
 │  turn_end: 触发后台 Reflector/Curator             │
 │  compact: 原则提取 + Curator 摘要作为结果          │
 │  status: 显示 GRC 运行状态                        │
@@ -173,18 +258,22 @@ Pi Session 生命周期
 pi.on("before_agent_start", async (event, ctx) => {
   let prompt = event.systemPrompt;
 
-  // 基础认知框架（始终）
-  prompt += buildBaseGRCPrompt();
+  // 基础认知框架（仅在 GRC 允许接管时）
+  if (!orchestrationSuspended && grcState.manualMode !== "forced-off") {
+    prompt += buildBaseGRCPrompt();
+  }
 
   // Reflector 顾问意见（GRC 模式 + R 已完成）
   if (grcState.mode === "grc" && grcState.reflector.lastAdvice) {
     prompt += buildReflectorInjection(grcState.reflector.lastAdvice);
   }
 
-  // 相关 Principles（始终，如果有匹配的）
-  const relevant = searchPrinciples(event.prompt, principles, config.maxPrinciplesInjection);
-  if (relevant.length > 0) {
-    prompt += formatPrinciplesForInjection(relevant);
+  // 当前可注入 Principles（不是按 prompt 搜索，而是从活跃原则池选择）
+  if (!orchestrationSuspended && grcState.manualMode !== "forced-off") {
+    const injectable = principles.listInjectable(config.maxPrinciplesInjection);
+    if (injectable.length > 0) {
+      prompt += formatPrinciplesForInjection(injectable);
+    }
   }
 
   return { systemPrompt: prompt };
@@ -219,7 +308,7 @@ pi.sendMessage({
 **核心实现: 使用 `complete()` 独立调用 LLM**
 
 ```typescript
-import { complete } from "@mariozechner/pi-ai";
+import { complete } from "@earendil-works/pi-ai";
 
 // Reflector: 一次独立的 LLM 调用
 async function executeReflector(
@@ -302,28 +391,28 @@ if (grcState.reflector.status === "done" && grcState.reflector.lastAdvice) {
 ### 2.5 GRC 触发的完整时序（包含 Generator 增强点）
 
 ```
-turn 1-5 (普通模式):
+agent-round 1-5（普通模式）:
   Generator 增强: 仅系统层（基础 GRC prompt + 相关 principles）
   上下文层: 无修剪，LLM 看到原始完整消息
   对话层: 无 steer
 
-turn 6 (turn_end —— GRC 触发):
+第 6 个 agent-round（GRC 触发）:
   │
   ├── (1) grcState.mode = "grc"
   │
   ├── (2) 对话层增强: steer 注入反思引导
   │       pi.sendMessage({ content: reflectionSteer, ... }, { deliverAs: "steer" })
-  │       → LLM 在下一轮工具处理后看到
+  │       → LLM 在下一次 LLM 调用前看到
   │       → Generator 产出一段自我反思（融入正常回复）
   │       → 这段反思成为对话历史的一部分
   │
   ├── (3) 启动 Reflector complete()（异步）
-  │       输入: turn 1-6 完整对话 + Generator 产出的反思
+  │       输入: 截至第 6 个 agent-round 的完整对话历史 + Generator 产出的反思
   │
   └── (4) 启动 Curator complete()（异步）
-          输入: turn 1-6 完整对话
+          输入: 截至第 6 个 agent-round 的完整对话历史
 
-turn 7 (before_agent_start —— Generator 被全面增强):
+第 7 个 agent-round（before_agent_start —— Generator 被全面增强）:
   │
   ├── 系统层增强:
   │   ├─ 基础 GRC prompt（始终）
@@ -332,20 +421,20 @@ turn 7 (before_agent_start —— Generator 被全面增强):
   │   └─ Reflector 未完成? → 跳过，下轮再检查
   │
   └── 上下文层增强 (context hook):
-      ├─ Curator 已完成? → [结构化摘要] + [turn 5-7 完整记录]
+      ├─ Curator 已完成? → [结构化摘要] + [agent-round 5-7 的近期记录]
       └─ Curator 未完成? → 不修剪
 
   此时 Generator (LLM) 看到的上下文:
     systemPrompt: [基础GRC] + [相关原则] + [顾问意见]
-    messages:     [结构化摘要] + [turn 5] + [turn 6 + 反思] + [turn 7]
+    messages:     [结构化摘要] + [agent-round 5] + [agent-round 6 + 反思] + [agent-round 7]
     → Generator 在这个增强上下文中产出的回答质量显著高于平铺直叙的 50 条原始消息
 
-turn 10 (turn_end —— 下一轮 GRC):
+第 10 个 agent-round（下一轮 GRC）:
   turnCount - lastGrcTriggerTurn >= cooldownTurns (4)
   且 R/C 不在运行中
   → 触发 cycle 2
   → 新的 steer 反思引导
-  → 新的 R/C（输入: Curator 摘要 + turn 5-10）
+  → 新的 R/C（输入: Curator 摘要 + agent-round 5-10）
 ```
 
 ---
@@ -357,108 +446,81 @@ turn 10 (turn_end —— 下一轮 GRC):
 - **弱感知**: 用户不需要理解 GRC 是什么，只需知道"系统在帮我管理对话质量"
 - **信息密度**: 在一行内传递关键信息
 - **状态可辨**: 不同阶段有不同的视觉信号
-- **不干扰**: 永远不弹 notify，只用 widget/status
+- **不串场**: 不再占用共享 status 区，临时状态直接并入 PasstoContext 自身 widget
+- **共存保护**: 遇到外部编排型 extension 时主动让行，不争夺 LLM 流程控制权
 
 ### 3.2 Widget 布局（输入框上方）
 
-**普通模式**:
-```
-T:5 | 📝3 | ⏱12m
-```
-- T: turn 数
-- 📝: 修改的文件数
-- ⏱: 会话时长
+#### 3.2.1 当前实现（已同步）
 
-**GRC 模式**（升级后多一个段）:
-```
-T:8 | 📝5 | ⏱20m | ◆ R:✓ C:⟳
-```
-- ◆: GRC 模式激活标识（固定显示，区别于普通模式）
-- R:✓ / R:⟳ / R:✗ : Reflector 状态（完成/运行中/失败）
-- C:✓ / C:⟳ / C:✗ : Curator 状态
+当前代码中的 widget 已更新为紧凑实现：
 
-**状态字符含义**:
-```
-⟳  运行中（subagent 正在执行）
-✓  完成（结果已注入或待注入）
-✗  失败（降级，不影响主对话）
-·  空闲（等待下次触发）
+```text
+Run:{n} {contextUsage} | 记:{memoryBytes} | 思:{reflectorStatus} | 理:{curatorStatus}
 ```
 
-**完整的状态演变**:
-```
-T:1 | 📝0 | ⏱1m                         ← 普通模式
-T:3 | 📝2 | ⏱5m                         ← 普通模式
-T:6 | 📝3 | ⏱10m | ◆ R:⟳ C:⟳           ← GRC 刚触发
-T:7 | 📝4 | ⏱12m | ◆ R:✓ C:⟳           ← Reflector 完成
-T:8 | 📝5 | ⏱15m | ◆ R:✓ C:✓           ← 都完成，已注入
-T:9 | 📝5 | ⏱18m | ◆ R:· C:·           ← 冷却中
-T:10| 📝6 | ⏱20m | ◆ R:⟳ C:⟳           ← 下一轮 GRC
-```
+其中：
+- `Run` = 当前 agent-round 内的 turn-round 数
+- 第二字段 = 当前上下文使用量（context usage tokens）
+- `记` = memory footprint
+- `思` / `理` = Reflector / Curator 运行态
 
-### 3.3 Status（底部状态栏）
+#### 3.2.2 当前目标规格（已落地）
 
-仅在 GRC 状态变化时短暂显示，随后清除：
+当前 widget 目标规格已落地为：
 
-```typescript
-// GRC 触发时
-ctx.ui.setStatus("grc", "◆ GRC activated — analyzing conversation");
-
-// Reflector 完成时
-ctx.ui.setStatus("grc", "◆ Reflector: 3 suggestions ready");
-
-// Curator 完成时
-ctx.ui.setStatus("grc", "◆ Curator: context optimized, 2 principles extracted");
-
-// 5 秒后清除
-setTimeout(() => ctx.ui.setStatus("grc", undefined), 5000);
+```text
+Run:11 7.5k | 记:28.4K | 思:✓ | 理:✓
 ```
 
-### 3.4 实现
+语义定义：
+- `Run:11`
+  - `Run` = **当前 agent-round 内的 turn-round 数**
+  - 表示当前 `agent_start -> agent_end` 内已完成多少个 turn-round
+- `7.5k`
+  - 表示**当前上下文使用量**（context usage tokens）
+  - 来自 `ctx.getContextUsage()` 一类运行时上下文指标
+  - 不是 memory token，也不是 context window 总上限
+- `记:28.4K`
+  - 表示 memory 持久层的体量（字节/容量标签）
+- `思:✓` / `理:✓`
+  - 分别表示 Reflector / Curator 的**真实运行态**
+  - 目标是与真实执行完成、失败、运行中严格同步
 
-```typescript
-function formatGRCWidget(
-  tracker: ContextTracker,
-  grcState: GRCState,
-): string {
-  const state = tracker.getState();
-  const parts: string[] = [];
+#### 3.2.3 显示原则
 
-  // 基础信息（始终显示）
-  parts.push(`T:${state.turnCount}`);
+- widget 只保留少量关键指标，不再承载过多状态词
+- 默认不在 widget 中显示 logger 文本
+- 使用 `Run` 表示当前 agent-round 内的 turn-round 数，避免额外缩写造成理解门槛
+- context usage 与 memory footprint 必须分开，不能混成一个字段
+- 反思 / 梳理状态必须以真实 runtime 为准，不允许“看起来完成，实际未完成”的漂移
 
-  if (state.filesModified.length > 0) {
-    parts.push(`📝${state.filesModified.length}`);
-  }
+### 3.3 临时状态提醒
 
-  const elapsed = Math.round((Date.now() - state.startTime) / 60000);
-  parts.push(`⏱${elapsed}m`);
+本轮确认后，运行态临时提醒不应承载 logger 文本，也不应与调试输出混用。
 
-  // GRC 模式信息（仅 GRC 模式显示）
-  if (grcState.mode === "grc") {
-    const r = statusChar(grcState.reflector.status);
-    const c = statusChar(grcState.curator.status);
-    parts.push(`◆ R:${r} C:${c}`);
-  }
+目标规则：
+- 只显示面向用户的轻量运行态提示
+- 不显示 debug/logger 行
+- 若需要调试信息，写入持久化日志目录 `~/.passtocontext/log/`
+- 临时提示若保留，仍可短暂并入 widget 末尾，但应与核心指标（`Run / context usage / memory / Reflector / Curator`）分离
 
-  return parts.join(" | ");
-}
+### 3.4 实现说明
 
-function statusChar(status: SubagentStatus): string {
-  switch (status) {
-    case "running": return "⟳";
-    case "done": return "✓";
-    case "failed": return "✗";
-    case "idle": return "·";
-  }
-}
-```
+当前代码已完成以下同步：
+- 保留 `Run` 作为当前 agent-round 内 turn-round 数的名称
+- widget 第二字段已切换为 **当前上下文使用量**
+- `记` 字段只显示 memory footprint，例如 `记:28.4K`
+- `思` / `理` 的状态以真实 runtime 为准进行显示
+- logger/debug 不再进入 widget/TUI，改为持久化到 `~/.passtocontext/log/`
 
 ---
 
 ## 4. 数据结构设计
 
 ### 4.1 GRC 状态机
+
+> 注：以下代码块保留当前实现中的字段名 `turnCount` / `processedUpToTurn`，它们是实现命名；在术语层面应分别按“外层轮次计数 / 已处理到的历史基线”理解，而不再直接等同于旧的 `user-turn` 概念。
 
 ```typescript
 // 新文件: grc-state.ts
@@ -497,8 +559,9 @@ interface GRCState {
 ```typescript
 interface GRCConfig {
   enabled: boolean;
-  grcTurnThreshold: number;       // 默认 6
-  grcCooldownTurns: number;       // 默认 4
+  grcTurnThreshold: number;        // 默认 5
+  grcCooldownTurns: number;        // 默认 4
+  midRunTurnThreshold: number;     // 默认 15
   curatorKeepRecentTurns: number;  // 默认 4
   subagentModel: string;           // 默认 "gemini-3-flash"
   subagentModelProvider: string;   // 默认 "opencode"
@@ -507,6 +570,8 @@ interface GRCConfig {
   principlesDir: string;           // 默认 "~/.passtocontext/memory/principles"
   maxPrinciplesInjection: number;  // 默认 5
   maxPrinciples: number;           // 默认 100
+  orchestratorToolPrefixes: string[]; // 默认 ["passto_planner_", "passto_executor_", "passto_builder_"]
+  widgetNoticeMaxChars: number;    // 默认 24
 }
 ```
 
@@ -514,17 +579,17 @@ interface GRCConfig {
 
 ```
 ~/.passtocontext/
-├── config.json                    # 配置（新增 grc 字段）
-├── memory/
-│   ├── sessions/                  # 现有
-│   ├── entities/                  # 现有
-│   ├── notes/                     # 现有
-│   └── principles/                # 新增: 全局原则
-└── grc/                           # 新增: GRC 工作目录
-    ├── reflector-1.md             # Reflector 输出（持久化备份）
-    ├── curator-1.md               # Curator 输出（持久化备份）
-    └── ...
+├── config.json                    # 配置（含 grc 字段）
+└── memory/
+    ├── sessions/                  # 现有
+    ├── entities/                  # 现有
+    ├── notes/                     # 现有
+    └── principles/
+        └── principles-registry.json  # 当前原则 registry 主存储
 ```
+
+> 当前实现未采用独立 `.grc/` 工作目录持久化 Reflector / Curator 原文结果。
+> 运行态审计主要依赖 session appendEntry（如 `grc-state`、`grc-mid-run-debug`）与日志。
 
 ---
 
@@ -616,11 +681,13 @@ R/C 的 prompt 不是"请你反思一下"这种模糊指令，而是**完整的�
 
 ```markdown
 # 角色
-你是一个上下文整理专家。你的任务是将一段对话整理为高质量的结构化摘要，
-并提取可复用的经验原则。
+你是一个上下文整理专家兼原则库策展器。你的任务是将一段对话整理为高质量的结构化摘要，
+并基于当前原则库输出最小原则操作集 principleOps。
 
 # 输入
-以下是完整的对话记录。
+以下包含两部分：
+1. 当前完整对话记录
+2. 当前整个原则库（可能为空）
 
 # 任务一: 结构化摘要
 生成一份摘要，严格使用以下结构（缺失的部分写"无"）：
@@ -646,25 +713,34 @@ R/C 的 prompt 不是"请你反思一下"这种模糊指令，而是**完整的�
 ## 注意事项
 需要警惕的问题（如有）
 
-# 任务二: 原则提取
-从这段对话中提取可复用的经验。每条原则用以下格式标记：
-<!-- PRINCIPLE: {"content":"原则内容","tags":["标签1","标签2"]} -->
+# 任务二: principleOps
+在摘要之后，额外输出一个 JSON 代码块：
+```json
+{ "principleOps": [ ... ] }
+```
 
-其中：
-- content: 原则正文
-- tags: 1-4 个简短标签，由 LLM 直接生成
-- tags 必须适合检索，不要是整句
+支持的操作：
+- `create`
+- `reuse`
+- `merge`
+- `conflict`
 
-原则必须满足：
-- 具体（不是"要写好代码"这种废话）
-- 可复用（适用于类似场景）
-- 从实际执行中总结（不是常识）
-- 每次提取 0-3 条（没有值得提取的就不提取）
+治理原则：
+- 默认优先级：`reuse > merge > create`
+- 仅在现有原则不能覆盖时才 `create`
+- 明显策略相反时才 `conflict`
+- 每次最多输出 3 个 ops
+- 没有值得操作时输出 `{ "principleOps": [] }`
 
 # 约束
 - 摘要不超过 800 字
+- principleOps 必须是合法 JSON
 - 不要编造对话中没有的内容
 - 文件路径必须是对话中实际出现的
+
+<principles_registry>
+{principles_registry_json}
+</principles_registry>
 
 <conversation>
 {serialized_conversation}
@@ -688,7 +764,7 @@ R/C 的 prompt 不是"请你反思一下"这种模糊指令，而是**完整的�
 3. 如果输出超过 maxReflectorTokens → 截断
 4. 识别 Reflector 的显式空值协议（如"无"），并将其视为无实质建议，不注入 systemPrompt
 
-**Curator 摘要用于 context 修剪（替换旧 turn 的 user message）**：
+**Curator 摘要用于 context 修剪（替换较早的历史消息片段）**：
 ```markdown
 [上下文摘要 - 以下是之前对话的整理结果]
 
@@ -706,28 +782,28 @@ R/C 的 prompt 不是"请你反思一下"这种模糊指令，而是**完整的�
 ```
 原始 messages（发给 LLM 前，context hook 介入）:
   [user1, ass1, tool1, user2, ass2, tool2, user3, ass3, user4, ass4, ...]
-   turn1                 turn2              turn3        turn4
+   早期片段1             早期片段2         近期片段3   近期片段4
 
-Curator 已处理到 turn2, curatorKeepRecentTurns = 2:
+Curator 已处理到前两段历史片段，curatorKeepRecentTurns = 2:
 
 修剪后:
   [curator_summary_as_user_msg, user3, ass3, user4, ass4, ...]
-   ↑ 替换 turn1-2             turn3        turn4 (保留最近2个turn)
+   ↑ 替换较早片段1-2        近期片段3        近期片段4（保留最近2段）
 ```
 
-### 6.2 Turn 边界检测
+### 6.2 历史消息片段边界检测（当前实现近似）
 
 ```typescript
 interface TurnBoundary {
-  startIndex: number;  // 这个 turn 的第一条 user message 在 messages[] 中的索引
-  endIndex: number;    // 这个 turn 的最后一条消息（下一个 user msg 之前）
+  startIndex: number;  // 当前实现中，这段历史片段的第一条 role="user" 消息索引
+  endIndex: number;    // 这段历史片段的最后一条消息（下一个 role="user" 之前）
   turnNumber: number;
 }
 
 function findTurnBoundaries(messages: Message[]): TurnBoundary[] {
-  // turn 从每条 role="user" 的消息开始
+  // 当前实现按每条 role="user" 的消息起点近似切分历史片段
   // 到下一条 role="user" 之前的所有消息结束
-  // 注意: compaction summary message 不算 turn 边界
+  // 注意: compaction summary message 不算这里的近似边界
 }
 ```
 
@@ -735,13 +811,13 @@ function findTurnBoundaries(messages: Message[]): TurnBoundary[] {
 
 ```
 Curator 通过 context hook 修剪
-  → LLM 看到的 token 始终 ≈ curator_summary + 最近 4 turn
+  → LLM 看到的 token 始终 ≈ curator_summary + 最近 4 段保留记录
   → 通常 < 30k tokens
   → 远低于 contextWindow (200k)
   → Pi compact 条件 (contextTokens > contextWindow - reserveTokens) 不满足
   → Pi compact 不触发
 
-极端情况（单个 turn 内 tool 输出巨大）:
+极端情况（单个 turn-round 内 tool 输出巨大）:
   → context hook 修剪后仍然超限
   → Pi compact 触发
   → session_before_compact 中:
@@ -754,26 +830,27 @@ Curator 通过 context hook 修剪
 
 ## 7. 全局原则记忆（v1.0 基础 + v2.0 规划）
 
-### 7.1 v1.0: 基础实现（本次）
+### 7.1 v1.0: 当前实现（已升级到 registry + principleOps 治理）
 
-**存储**: YAML 文件，复用 passto-context 的格式
-```yaml
-type: principle
-created: "2026-05-07T10:30:00.000Z"
-tags:
-  - typescript
-  - pi-extension
-content: |
-  在 Pi extension 中，使用 context hook 修剪消息比直接
-  操作 session 文件更安全，因为 session 是 append-only 的。
-metadata: |
-  source: session-abc-cycle-2
-  hitCount: 3
-  lastUsed: 2026-05-07
-```
+**存储**: 单文件 registry（`principles-registry.json`），每条原则带治理元信息：
+- `sources`
+- `hintCount`
+- `activeScore`
+- `hintTimestamps`
+- `mergeCount`
+- `conflictGroupId`
 
-**检索**: 关键词匹配（复用 memory-index.ts 的搜索逻辑）
-**注入**: `before_agent_start` 中搜索与 prompt 相关的 principles，注入 systemPrompt
+**写入方式**: Curator 不再直接吐出“新增原则列表”，而是输出 `principleOps`，由本地治理层应用：
+- `create`
+- `reuse`
+- `merge`
+- `conflict`
+
+**检索**:
+- `search(query, limit)`: 用于用户查询 `/ptc principles`（历史阶段原称 `/pta principles`）
+- `listInjectable(limit)`: 用于 `before_agent_start` 注入活跃原则池
+
+**注入**: `before_agent_start` 中按活跃度与冲突消解后的 injectable principles 注入 systemPrompt
 **注入格式**:
 ```markdown
 --- 经验原则（来自历史会话）---
@@ -788,9 +865,9 @@ metadata: |
 
 **7.2.1 原则的优雅使用时机**
 
-目前 v1.0 的注入是"每次 before_agent_start 都搜索注入"，这有两个问题：
-- 注入的 principles 可能与当前 turn 不相关（关键词匹配太粗糙）
-- 每次都注入会浪费 systemPrompt 的 token 预算
+目前实现的注入已从“按 prompt 关键词搜索”切换到“从活跃原则池中选择 injectable principles”，但仍有两个可继续优化的问题：
+- 活跃原则池仍未做到严格场景感知，可能与当前 turn 相关性不足
+- 每次都注入仍会消耗 systemPrompt token 预算
 
 v2.0 方向：
 - **语义相关性**: 用 embedding 替代关键词匹配（需要额外的 embedding 模型）
@@ -836,7 +913,7 @@ v2.0 方向：
 | `grc-subagent.ts` | **新建** | Reflector/Curator 的 complete() 调度 |
 | `grc-principles.ts` | **新建** | 原则提取、存储、检索 |
 | `grc-context-manager.ts` | **新建** | context hook 修剪逻辑 |
-| `index.ts` | 修改 | 集成 GRC 到事件链与 `/pta` 命令 |
+| `index.ts` | 修改 | 集成 GRC 到事件链与 `/ptc` 命令（历史阶段原称 `/pta`） |
 | `compaction.ts` | 修改 | GRC 模式下 compact 行为变更（curator-first） |
 | `context-tracker.ts` | 修改 | widget 融合 GRC 状态 |
 | `utils.ts` | 修改 | 新增辅助函数 |
@@ -884,7 +961,7 @@ async function executeCurator(
 function parseCuratorOutput(raw: string): CuratorResult | null
 // 验证: 必须包含"目标"和"已完成"section
 // 验证: 文件路径必须在对话中出现过
-// 提取: <!-- PRINCIPLE: ... --> 标记
+// 提取: 末尾 JSON 代码块中的 principleOps
 
 interface ReflectorResult {
   advice: string;          // 格式化后的顾问意见
@@ -903,8 +980,8 @@ interface PrincipleDraft {
 }
 
 interface CuratorResult {
-  summary: string;              // 结构化摘要
-  principles: PrincipleDraft[]; // 提取的原则（含 LLM 生成 tags）
+  summary: string;          // 结构化摘要
+  principleOps: PrincipleOp[];
   sections: {
     goal: string;
     completed: string[];
@@ -932,10 +1009,11 @@ interface CuratorResult {
 | Reflector 输出格式错误 | parseReflectorOutput 返回 null, 视为失败 |
 | Curator 输出格式错误 | parseCuratorOutput 返回 null, 视为失败 |
 | Reflector 输出空洞无内容 | hasSubstantiveContent=false, 跳过注入，并记录 `Reflector finished (no substantive advice)` |
-| Curator 输出空洞无内容 | 结构化摘要仍可保留，但 principles 可为 0 条 |
-| manualMode = forced-off | 不注入 GRC prompt / principles，不做 context 修剪，不启用 curator-aware compaction |
+| Curator 输出空洞无内容 | 结构化摘要仍可保留，但 `principleOps` 可为空 |
+| compatibility `manualMode = forced-off`（现主口径等价于 `runtimeMode=off`） | 不注入 GRC prompt / principles，不做 context 修剪，不启用 curator-aware compaction |
+| 检测到外部编排工具 | Orchestrator Guard 生效，GRC 进入让行/观察模式 |
 | 模型 API Key 缺失 | GRC 降级: 只做 prompt 注入，不启动 R/C |
-| .grc/ 目录写入失败 | 日志警告，R/C 结果仍在内存中可用 |
+| mid-run Reflector 触发后无实质建议 | 记录 `finished-no-advice` 审计 entry，不重复投递 steer |
 | context 修剪后消息格式错误 | 回退: 返回原始 messages |
 | 两个 R/C 同时运行（并发冲突） | 状态机保证: running 状态时不触发新的 |
 
@@ -950,57 +1028,63 @@ interface CuratorResult {
   "tracking": { "enabled": true, "showWidget": true },
   "grc": {
     "enabled": true,
-    "grcTurnThreshold": 6,
+    "grcTurnThreshold": 5,
     "grcCooldownTurns": 4,
+    "midRunTurnThreshold": 15,
     "curatorKeepRecentTurns": 4,
+    "curatorEveryAgentRounds": 1,
+    "keepRecentAgentRounds": 2,
+    "summaryCacheSize": 6,
+    "maxGoalStateActive": 8,
     "subagentModel": "gemini-3-flash",
     "subagentModelProvider": "opencode",
     "maxReflectorTokens": 1500,
     "maxCuratorSummaryTokens": 3000,
     "principlesDir": "~/.passtocontext/memory/principles",
     "maxPrinciplesInjection": 5,
-    "maxPrinciples": 100
+    "maxPrinciples": 100,
+    "orchestratorToolPrefixes": ["passto_planner_", "passto_executor_", "passto_builder_"],
+    "widgetNoticeMaxChars": 24
   },
+  "logEnabled": true,
   "logLevel": "info"
 }
 ```
 
 ---
 
-## 11. 当前实现与真实验证状态（2026-05-07）
+## 11. 当前实现与真实验证状态（2026-05-09）
 
 基于本地真实 Pi CLI 环境（通过 `~/.pi/agent/settings.json` 挂载当前资源仓）已验证：
 
 - 扩展可真实加载并在 print/continue 模式下稳定运行
-- 第 6 个用户轮次会自动触发 GRC
-- steer 反思会真实追加到主对话
-- Reflector / Curator 会在后台真实调用模型
-- Curator 摘要已真实驱动 `context` 修剪，日志可见 `15 -> 9 messages`
-- principles 已真实落盘到 `~/.passtocontext/memory/principles/`
-- principle tags 已改为由 LLM 直接生成，而非本地中文粗切词
-- `passto-context-state.turnCount` 已修正为“用户轮次”；`grcState.turnCount` 保持 GRC 内部计数语义
+- 主调度已切到 `agent_end -> post-round jobs`；Reflector 每轮运行，Curator 按 `curatorEveryAgentRounds=1` 默认每轮运行
+- `agent_start` 会写入 `passto-round-boundary`，用于按 agent-round 回放与 recent rounds 重建
+- Curator 输出已升级为 `summaryEntry + GoalStateDocument + RequirementLedger + signal`
+- `before_agent_start` 已真实注入 `ObjectiveSnapshot + GoalState + SummaryCache + Reflector advice + principles`
+- SummaryCache 注入会排除最近 raw rounds，避免与最近 agent-round 原始消息重复
+- `context` 主路径已切到“最近 agent-round 原始消息 + ObjectiveSnapshot/GoalState/SummaryCache”；旧 `lastSummary` 仍保留为兼容 fallback
+- principles 已真实落盘到 `~/.passtocontext/memory/principles/principles-registry.json`
+- principles 治理已升级为 `principleOps + registry`：支持 `create / reuse / merge / conflict`
+- `grc-curator-artifact` 已落地：Curator 完成后会增量持久化；`session_start` 会 replay artifact 重建 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`
+- `RequirementLedger` 已落地：Curator 原生产出 ledger，并持久化为 `grc-requirement-ledger`；`session_start` 会恢复最新 ledger 并重建 `lastObjectiveSnapshot`
+- `ObjectiveSnapshot` 当前不再是启发式事实源，而是由 active ledger items 投影得到：`goal -> primaryGoal`，`constraint / preference / non-goal / success / question` 分别映射到对应字段
+- artifact 恢复已具备显式校验与观测：校验 `agentRound / recordedAt / processedUpToUserTurn`，并记录 rejected 数、summaryCacheRounds、goalStateRound
+- `/ptc` 命令面（历史阶段曾暴露 `/pta` / `/PTA`）已实现，支持 `status / on / off / reflect / curate / principles / config`
+- `/ptc status`（历史阶段原称 `/pta status`）已可观测 `SummaryCache entries`、`Injected SummaryCache rounds`、`Latest Curator Artifact Round`、`Objective Snapshot`、`Requirement Ledger`、`GoalState Snapshot`、`Last Signal`
 - Reflector 在无实质建议时会保留 `status=done`、`lastAdvice=null`，并输出日志 `Reflector finished (no substantive advice)`
-- `/pta` / `/PTA` 已实现，支持 `status / on / off / reflect / curate / principles / config`
-- `manualMode = auto | forced-on | forced-off` 已落地到状态机
+- Mid-run Reflector 已落地：
+  - 单次 agent-round 内的 turn-round 达到 `midRunTurnThreshold` 时触发
+  - 会持久化 `grc-mid-run-debug` 审计 entry（如 `triggered` / `delivered` / `failed`）
+- 历史兼容字段 `manualMode = auto | forced-on | forced-off` 已落地到状态机；当前公开控制面已收敛为 `runtimeMode = on | off`
+- Orchestrator Guard 已落地：检测到 `passto_planner_` / `passto_executor_` / `passto_builder_` 等工具前缀时，GRC 自动让行
+- widget 当前代码已更新为 `Run / context usage / 记 / 思 / 理` 结构
+- logger 已不再通过 TUI 承载；若开启调试，持久化到 `~/.passtocontext/log/`
 - `session_before_compact` 已实现 curator-first compaction，日志可见 `Using curator summary for compaction`
-- 隔离加载测试已确认编译后的 jiti 产物中包含 `/pta` 注册与 curator-aware compaction 分支
-- 6.1 已落地：
-  - R/C 失败会降级，不阻塞主对话
-  - 缺少模型/API Key 时会记录 warning，并在有 UI 时提示用户
-  - 旧 session 的后台 Promise 通过 session generation 守卫，不能回写新会话状态
-- 6.4 已落地：
-  - `restoreGRCState()` 会把持久化的 `running` 状态恢复为 `idle`
-  - `session_start` / `session_shutdown` 会执行 principles 上限清理
-  - shutdown 会限时等待后台任务收尾，再持久化状态并 reset module state
-- 真实 TUI 回归脚本 `scripts/tui-regression.sh` 已通过，覆盖：
-  - `/pta status`
-  - `/pta on`
-  - `/pta off`
-  - `/pta reflect`
-  - `/pta curate`
-  - `/reload` 后状态恢复与 running→idle 修复
-  - `/new` 后 session-scoped 状态重置
-  - `/resume` 对话框打开与 All 视图切换
+- `restoreGRCState()` 会把持久化的 `running` 状态恢复为 `idle`
+- `session_start` / `session_shutdown` 会执行 principles 上限清理；shutdown 会限时等待后台任务收尾，再持久化状态并 reset module state
+- 真实 TUI 回归脚本 `scripts/tui-regression.sh` 已通过
+- Mid-run 回归脚本 `scripts/midrun-regression.sh` 已通过
 - 额外探测结论：`/resume` 的实际“恢复到指定旧 session”在自动化脚本中暂不稳定，因为 All 视图会混入全局历史 session，排序与默认焦点不固定；该项保留为人工补充回归
 
 ## 附录 A: Pi Extension API 关键约束
@@ -1010,9 +1094,9 @@ interface CuratorResult {
 3. `before_agent_start` 的 systemPrompt 是链式的
 4. `pi.sendMessage({ deliverAs: "steer" })` 在 turn 间注入
 5. `pi.appendEntry()` 不参与 LLM 上下文
-6. `complete()` 来自 `@mariozechner/pi-ai`，可直接调用 LLM
+6. `complete()` 来自 `@earendil-works/pi-ai`，可直接调用 LLM
 7. `ctx.ui.setWidget()` 设置输入框上方的信息
-8. `ctx.ui.setStatus()` 设置底部状态栏
+8. `ctx.ui.setStatus()` 设置底部状态栏（PasstoContext 后续不应再用其承载 logger/debug 输出）
 
 ## 附录 B: 与 APPEND_SYSTEM.md 的关系
 
