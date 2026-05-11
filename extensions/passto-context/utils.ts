@@ -4,6 +4,8 @@
  */
 
 import * as os from "node:os";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { Logger, LogLevel, MemoryItem } from "./types.js";
 
 // =============================================================================
@@ -32,6 +34,13 @@ export function getDefaultConfigDir(): string {
  */
 export function getDefaultMemoryDir(): string {
   return expandHome("~/.passtocontext/memory");
+}
+
+/**
+ * Get the default log directory
+ */
+export function getDefaultLogDir(): string {
+  return expandHome("~/.passtocontext/log");
 }
 
 // =============================================================================
@@ -255,15 +264,45 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 /**
- * Create a logger that prefixes output with [PasstoContext]
+ * Create a file-backed logger that writes to ~/.passtocontext/log/
  */
-export function createLogger(level: LogLevel): Logger {
+export function createLogger(level: LogLevel, enabled = true): Logger {
   const minLevel = LOG_LEVELS[level];
+  const logDir = getDefaultLogDir();
+  const logFile = path.join(logDir, `${new Date().toISOString().slice(0, 10)}.log`);
+  let writeChain: Promise<void> = Promise.resolve();
+
+  const serializeArg = (value: unknown): string => {
+    if (value instanceof Error) {
+      return value.stack ?? `${value.name}: ${value.message}`;
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const appendLine = (line: string): void => {
+    writeChain = writeChain
+      .then(async () => {
+        await fs.mkdir(logDir, { recursive: true });
+        await fs.appendFile(logFile, `${line}\n`, "utf8");
+      })
+      .catch(() => {
+        // Never throw from logger.
+      });
+  };
 
   const log = (method: "error" | "warn" | "info" | "debug", ...args: unknown[]) => {
-    if (LOG_LEVELS[method] <= minLevel) {
-      console[method](`[PasstoContext]`, ...args);
-    }
+    if (!enabled) return;
+    if (LOG_LEVELS[method] > minLevel) return;
+    const timestamp = new Date().toISOString();
+    const message = args.map(serializeArg).join(" ");
+    appendLine(`${timestamp} [PasstoContext] [${method.toUpperCase()}] ${message}`);
   };
 
   return {
@@ -271,12 +310,24 @@ export function createLogger(level: LogLevel): Logger {
     warn: (...args) => log("warn", ...args),
     info: (...args) => log("info", ...args),
     debug: (...args) => log("debug", ...args),
+    flush: async () => {
+      await writeChain;
+    },
   };
 }
 
 // =============================================================================
 // File Utilities
 // =============================================================================
+
+/**
+ * Format a number using a compact K suffix.
+ */
+export function formatCompactK(value: number): string {
+  if (value <= 0) return "0";
+  if (value < 1024) return `${value}`;
+  return `${(value / 1024).toFixed(1)}K`;
+}
 
 /**
  * Sanitize a string to be safe for use as a filename

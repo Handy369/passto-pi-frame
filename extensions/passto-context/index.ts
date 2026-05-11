@@ -12,32 +12,46 @@
  */
 
 import * as fs from "node:fs/promises";
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { ensureConfigExists } from "./config.js";
+import { spawn } from "node:child_process";
+import { pathToFileURL } from "node:url";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { ensureConfigExists, getConfigFilePath } from "./config.js";
 import { createCompactionHandler } from "./compaction.js";
 import { createMemoryManager } from "./memory.js";
 import { createContextTracker } from "./context-tracker.js";
-import { createLogger, expandHome, getSessionDisplayName } from "./utils.js";
+import { createLogger, estimateTokens, expandHome, formatCompactK, getSessionDisplayName } from "./utils.js";
 import {
   clearRunningSubagentStatuses,
   createInitialGRCState,
-  forceActivateGRC,
-  incrementTurn,
-  markGRCTriggered,
+  finishAgentRound,
+  incrementTurnRound,
+  pushSummaryCacheEntry,
   restoreGRCState,
   serializeGRCState,
-  setGRCManualMode,
-  shouldTriggerGRC,
-  shouldTriggerNextCycle,
-  transitionToGRC,
+  setRuntimeMode,
+  startAgentRound,
   updateCuratorStatus,
   updateReflectorStatus,
 } from "./grc-state.js";
-import { buildBaseGRCPrompt, buildReflectionSteerPrompt, buildReflectorInjection } from "./grc-prompts.js";
+import { buildBaseGRCPrompt, buildGoalStateInjection, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
+import { buildReflectorGoalContext } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
 import { createPrinciplesManager, formatPrinciplesForInjection } from "./grc-principles.js";
-import { optimizeContextMessages } from "./grc-context-manager.js";
-import type { GRCState, PasstoContextConfig, SessionState } from "./types.js";
+import { parseCuratorArtifactEntry, restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
+import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
+import { formatPTCStatus } from "./ptc-status.ts";
+import { appendWidgetNotice, getVisibleWidgetNotice, type WidgetNoticeState } from "./widget-status.ts";
+import {
+  getCurrentAgentRoundEntries,
+  getLatestUserMessageText,
+  getPreviousAgentRoundEntries,
+  getRecentAgentRoundMessages,
+  getSlidingWindowAgentRoundMessages,
+  mergeRecentAgentRoundMessagesWithContext,
+  serializeCurrentAgentRoundConversation,
+  serializePreviousAgentRoundConversation,
+} from "./grc-context-manager.js";
+import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, SessionState } from "./types.js";
 
 // =============================================================================
 // Module State (module-level singleton for the extension lifetime)
@@ -55,6 +69,94 @@ let reflectorPromise: Promise<void> | null = null;
 let curatorPromise: Promise<void> | null = null;
 let sessionActive = false;
 let sessionGeneration = 0;
+let widgetRefreshCtx: ExtensionContext | null = null;
+let widgetTicker: ReturnType<typeof setInterval> | null = null;
+let reflectorStartedAt: number | null = null;
+let curatorStartedAt: number | null = null;
+let widgetNotice: WidgetNoticeState | null = null;
+let orchestrationSuspended = false;
+let orchestrationReason = "";
+let currentRun: CurrentRunState = createInitialCurrentRunState();
+
+type GRCJobTargets = "reflector" | "curator";
+type PostRoundJobTargets = "reflector";
+
+type CurrentRunState = {
+  active: boolean;
+  startedAt: number | null;
+  turnCount: number;
+  stuckReflectorTriggered: boolean;
+  stuckReflectorDelivered: boolean;
+};
+
+type MidRunDebugPhase =
+  | "triggered"
+  | "finished-no-advice"
+  | "finished-after-agent-end"
+  | "duplicate-delivery-skipped"
+  | "delivered"
+  | "failed";
+
+type MidRunDebugEntry = {
+  phase: MidRunDebugPhase;
+  recordedAt: string;
+  sessionGeneration: number;
+  runTurn: number;
+  threshold: number | null;
+  agentRound: number;
+  userTurns: number;
+  currentRunActive: boolean;
+  stuckReflectorDelivered: boolean;
+  processedUpToUserTurn?: number;
+  adviceChars?: number;
+  missingAuth?: boolean;
+  error?: string;
+};
+
+function createInitialCurrentRunState(): CurrentRunState {
+  return {
+    active: false,
+    startedAt: null,
+    turnCount: 0,
+    stuckReflectorTriggered: false,
+    stuckReflectorDelivered: false,
+  };
+}
+
+function getCurrentUserTurnCount(): number {
+  return tracker?.getState().turnCount ?? 0;
+}
+
+function formatErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function getMidRunThreshold(): number | null {
+  return config?.grc.midRunTurnThreshold ?? null;
+}
+
+function appendMidRunDebugEntry(pi: ExtensionAPI, entry: MidRunDebugEntry): void {
+  try {
+    pi.appendEntry("grc-mid-run-debug", entry);
+  } catch (err) {
+    logger?.warn("Failed to persist grc-mid-run-debug entry:", err);
+  }
+}
+
+function getPostRoundTargets(_state: GRCState, _grcConfig: PasstoContextConfig["grc"]): PostRoundJobTargets {
+  return "reflector";
+}
+
+function formatJobTargetsLabel(targets: GRCJobTargets | PostRoundJobTargets): string {
+  switch (targets) {
+    case "reflector":
+      return "反思";
+    case "curator":
+      return "梳理";
+    default:
+      return "反思";
+  }
+}
 
 async function fsMkdirSafe(dir: string): Promise<void> {
   await fs.mkdir(dir, { recursive: true });
@@ -74,56 +176,182 @@ function statusChar(status: GRCState["reflector"]["status"]): string {
   }
 }
 
-function formatManualModeLabel(grcState: GRCState | null): string {
-  switch (grcState?.manualMode) {
-    case "forced-on":
-      return "forced-on";
-    case "forced-off":
-      return "forced-off";
-    case "auto":
-    default:
-      return "auto";
+function appendAgentRoundBoundary(pi: ExtensionAPI): void {
+  if (!grcState) return;
+
+  const entry: AgentRoundBoundaryEntry = {
+    customType: "passto-round-boundary",
+    agentRound: grcState.currentAgentRound,
+    totalCompletedAgentRounds: grcState.totalAgentRounds,
+    userTurnsAtStart: getCurrentUserTurnCount(),
+    createdAt: new Date().toISOString(),
+  };
+
+  try {
+    pi.appendEntry("passto-round-boundary", entry);
+  } catch (err) {
+    logger?.warn("Failed to persist passto-round-boundary entry:", err);
   }
 }
 
-function formatWidgetStatus(state: SessionState | null, grcState: GRCState | null): string {
+function appendCuratorArtifactEntry(pi: ExtensionAPI, entry: CuratorArtifactEntry): void {
+  try {
+    pi.appendEntry("grc-curator-artifact", entry);
+  } catch (err) {
+    logger?.warn("Failed to persist grc-curator-artifact entry:", err);
+  }
+}
+
+function terminalFileLink(filePath: string, label = filePath): string {
+  try {
+    const href = pathToFileURL(filePath).href;
+    return `\u001b]8;;${href}\u0007${label}\u001b]8;;\u0007`;
+  } catch {
+    return label;
+  }
+}
+
+function estimateSessionMemoryFootprint(): { sizeLabel: string; tokenLabel: string } {
+  if (!memory || !config?.memory.enabled) {
+    return { sizeLabel: "0", tokenLabel: "0" };
+  }
+
+  const items = memory.list();
+  if (items.length === 0) {
+    return { sizeLabel: "0", tokenLabel: "0" };
+  }
+
+  const serialized = items
+    .map((item) => [`# ${item.type}:${item.id}`, item.tags.join(","), item.content].filter(Boolean).join("\n"))
+    .join("\n\n");
+
+  const bytes = new TextEncoder().encode(serialized).length;
+  const tokens = estimateTokens(serialized);
+  const sizeLabel = formatCompactK(bytes);
+  const tokenLabel = tokens >= 1024 ? `${(tokens / 1024).toFixed(1)}kT` : `${tokens}T`;
+  return { sizeLabel, tokenLabel };
+}
+
+function formatSubagentRuntime(status: GRCState["reflector"]["status"], startedAt: number | null): string {
+  if (status === "running" && startedAt) {
+    const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    return `${seconds}s`;
+  }
+  if (status === "done") return "✓";
+  if (status === "failed") return "✗";
+  return "0";
+}
+
+function getRecentHintCountForDisplay(item: PrincipleItem, days: number): number {
+  const threshold = Date.now() - days * 24 * 60 * 60 * 1000;
+  return (item.metadata.hintTimestamps ?? []).filter((iso) => {
+    const value = new Date(iso).getTime();
+    return Number.isFinite(value) && value >= threshold;
+  }).length;
+}
+
+function summarizePrincipleOps(ops: Array<{ op: "create" | "reuse" | "merge" | "conflict" }>): string {
+  const counts = { create: 0, reuse: 0, merge: 0, conflict: 0 };
+  for (const op of ops) {
+    counts[op.op] += 1;
+  }
+  return `create=${counts.create}, reuse=${counts.reuse}, merge=${counts.merge}, conflict=${counts.conflict}`;
+}
+
+function syncWidgetTicker(): void {
+  const hasVisibleNotice = Boolean(getVisibleWidgetNotice(widgetNotice, config?.grc.widgetNoticeMaxChars ?? 24));
+  const shouldTick = Boolean(
+    sessionActive
+    && widgetRefreshCtx?.hasUI
+    && config?.tracking.showWidget
+    && (
+      getEffectiveReflectorStatus() === "running"
+      || getEffectiveCuratorStatus() === "running"
+      || hasVisibleNotice
+    ),
+  );
+
+  if (shouldTick) {
+    if (!widgetTicker) {
+      widgetTicker = setInterval(() => {
+        if (!widgetRefreshCtx) return;
+        refreshWidget(widgetRefreshCtx);
+      }, 1000);
+    }
+    return;
+  }
+
+  if (widgetTicker) {
+    clearInterval(widgetTicker);
+    widgetTicker = null;
+  }
+}
+
+function getContextUsageLabel(ctx: Pick<ExtensionContext, "getContextUsage"> | null | undefined): string {
+  const usage = ctx?.getContextUsage?.();
+  const tokens = usage?.tokens ?? 0;
+  if (tokens <= 0) return "0";
+  const compact = formatCompactK(tokens);
+  return compact.endsWith("K") ? compact.toLowerCase() : compact;
+}
+
+function formatMidRunReflectorState(run: CurrentRunState): string {
+  if (!run.active) return "idle";
+  if (run.stuckReflectorDelivered) return "delivered";
+  if (run.stuckReflectorTriggered) return "pending";
+  return "no";
+}
+
+function getEffectiveReflectorStatus(): GRCState["reflector"]["status"] {
+  if (reflectorPromise || reflectorStartedAt) return "running";
+  return grcState?.reflector.status ?? "idle";
+}
+
+function getEffectiveCuratorStatus(): GRCState["curator"]["status"] {
+  if (curatorPromise || curatorStartedAt) return "running";
+  return grcState?.curator.status ?? "idle";
+}
+
+function formatWidgetStatus(ctx: ExtensionContext, state: SessionState | null, grcState: GRCState | null): string {
+  if (grcState?.runtimeMode === "off") {
+    return "PTC:off";
+  }
+
   const parts: string[] = [];
-  const turnCount = state?.turnCount ?? grcState?.turnCount ?? 0;
-  parts.push(`T:${turnCount}`);
 
-  if (state && state.filesModified.length > 0) {
-    parts.push(`📝${state.filesModified.length}`);
+  const runLabel = currentRun.active ? `Run:${currentRun.turnCount}` : "Run:0";
+  const contextUsageLabel = getContextUsageLabel(ctx);
+  parts.push(`${runLabel} ${contextUsageLabel}`);
+
+  const memoryFootprint = estimateSessionMemoryFootprint();
+  parts.push(`记:${memoryFootprint.sizeLabel}`);
+  parts.push(`思:${formatSubagentRuntime(getEffectiveReflectorStatus(), reflectorStartedAt)}`);
+  parts.push(`理:${formatSubagentRuntime(getEffectiveCuratorStatus(), curatorStartedAt)}`);
+
+  const baseStatus = parts.join(" | ");
+  return appendWidgetNotice(baseStatus, widgetNotice, config?.grc.widgetNoticeMaxChars ?? 24);
+}
+
+function refreshWidget(ctx: ExtensionContext): void {
+  widgetRefreshCtx = ctx;
+  syncWidgetTicker();
+  if (!ctx.hasUI || !config?.tracking.showWidget) return;
+  try {
+    const status = formatWidgetStatus(ctx, tracker?.getState() ?? null, grcState);
+    ctx.ui.setWidget("passto-context", [status]);
+  } catch {
+    // Ignore UI refresh races.
   }
-
-  const startTime = state?.startTime ?? Date.now();
-  const elapsed = Math.round((Date.now() - startTime) / 60000);
-  parts.push(`⏱${elapsed}m`);
-
-  if (grcState?.mode === "grc") {
-    parts.push(`◆ R:${statusChar(grcState.reflector.status)} C:${statusChar(grcState.curator.status)}`);
-  }
-
-  return parts.join(" | ");
 }
 
 function setTransientGRCStatus(ctx: ExtensionContext, text: string): void {
   if (!sessionActive) return;
-
-  try {
-    if (!ctx.hasUI) return;
-    ctx.ui.setStatus("grc", text);
-  } catch {
-    return;
-  }
-
-  setTimeout(() => {
-    if (!sessionActive) return;
-    try {
-      ctx.ui.setStatus("grc", undefined);
-    } catch {
-      // Ignore UI teardown races during shutdown/reload.
-    }
-  }, 5000);
+  logger?.info(`[widget-note] ${text}`);
+  widgetNotice = {
+    text,
+    expiresAt: Date.now() + 5000,
+  };
+  refreshWidget(ctx);
 }
 
 function resetModuleState(): void {
@@ -138,10 +366,21 @@ function resetModuleState(): void {
   sessionDisplayName = "unknown";
   reflectorPromise = null;
   curatorPromise = null;
+  widgetRefreshCtx = null;
+  reflectorStartedAt = null;
+  curatorStartedAt = null;
+  widgetNotice = null;
+  if (widgetTicker) {
+    clearInterval(widgetTicker);
+    widgetTicker = null;
+  }
+  orchestrationSuspended = false;
+  orchestrationReason = "";
+  currentRun = createInitialCurrentRunState();
 }
 
 function isMissingAuthError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = formatErrorMessage(err);
   return /no api key|auth failed|g?rc model not found/i.test(message);
 }
 
@@ -170,112 +409,513 @@ async function waitForBackgroundJobs(timeoutMs: number, logger: ReturnType<typeo
   }
 }
 
+function detectExternalOrchestrator(ctx: ExtensionContext): { suspended: boolean; reason: string } {
+  if (!config) {
+    return { suspended: false, reason: "" };
+  }
+
+  const prefixes = config.grc.orchestratorToolPrefixes ?? [];
+  if (prefixes.length === 0) {
+    return { suspended: false, reason: "" };
+  }
+
+  const branch = ctx.sessionManager.getBranch();
+  for (let i = branch.length - 1; i >= 0; i--) {
+    const entry = branch[i];
+    if (entry.type !== "message") continue;
+    const message = entry.message as { toolName?: string; content?: Array<{ type?: string; name?: string }> } | undefined;
+    const toolNames = new Set<string>();
+    if (message?.toolName) {
+      toolNames.add(message.toolName);
+    }
+    for (const block of message?.content ?? []) {
+      if (block?.type === "toolCall" && typeof block.name === "string") {
+        toolNames.add(block.name);
+      }
+    }
+
+    for (const toolName of toolNames) {
+      const matchedPrefix = prefixes.find((prefix) => toolName.startsWith(prefix));
+      if (matchedPrefix) {
+        return {
+          suspended: true,
+          reason: `检测到外部编排流程：${toolName}`,
+        };
+      }
+    }
+  }
+
+  return { suspended: false, reason: "" };
+}
+
+function updateOrchestrationSuspension(ctx: ExtensionContext): void {
+  const previousSuspended = orchestrationSuspended;
+  const previousReason = orchestrationReason;
+  const detected = detectExternalOrchestrator(ctx);
+  const changed = previousSuspended !== detected.suspended || previousReason !== detected.reason;
+  orchestrationSuspended = detected.suspended;
+  orchestrationReason = detected.reason;
+
+  if (!changed) return;
+
+  if (orchestrationSuspended) {
+    logger?.debug(`Orchestrator guard engaged: ${orchestrationReason}`);
+    setTransientGRCStatus(ctx, "检测到编排流程，GRC 已让行");
+    return;
+  }
+
+  logger?.debug("Orchestrator guard released");
+}
+
+function isRuntimeEnabled(): boolean {
+  return grcState?.runtimeMode !== "off";
+}
+
+function isGRCAutoProcessingAllowed(): boolean {
+  return isRuntimeEnabled() && !orchestrationSuspended;
+}
+
+async function openConfigInSystemEditor(filePath: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const platform = process.platform;
+
+  const command =
+    platform === "darwin"
+      ? { cmd: "open", args: [filePath] }
+      : platform === "win32"
+        ? { cmd: "cmd", args: ["/c", "start", "", filePath] }
+        : { cmd: "xdg-open", args: [filePath] };
+
+  return await new Promise((resolve) => {
+    try {
+      const child = spawn(command.cmd, command.args, {
+        detached: true,
+        stdio: "ignore",
+      });
+
+      child.once("error", (err) => {
+        resolve({ ok: false, reason: formatErrorMessage(err) });
+      });
+
+      child.once("spawn", () => {
+        child.unref();
+        resolve({ ok: true });
+      });
+    } catch (err) {
+      resolve({ ok: false, reason: formatErrorMessage(err) });
+    }
+  });
+}
+
 // =============================================================================
 // Default Export
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
-  function startGRCBackgroundJobs(ctx: ExtensionContext, targets: "both" | "reflector" | "curator" = "both"): void {
+  function startMidRunReflector(ctx: ExtensionContext): void {
     if (!config || !logger || !grcState || !sessionActive) {
+      logger?.debug("Skipped mid-run Reflector: extension state not ready");
       return;
     }
-
-    const needReflector = targets === "both" || targets === "reflector";
-    const needCurator = targets === "both" || targets === "curator";
-
-    if ((needReflector && reflectorPromise) || (needCurator && curatorPromise)) {
+    if (!isRuntimeEnabled()) {
+      logger?.debug("Skipped mid-run Reflector: runtimeMode=off");
+      return;
+    }
+    if (!currentRun.active) {
+      logger?.debug("Skipped mid-run Reflector: no active run");
+      return;
+    }
+    if (orchestrationSuspended) {
+      logger?.debug(`Skipped mid-run Reflector due to orchestrator guard: ${orchestrationReason || "unknown"}`);
+      return;
+    }
+    if (reflectorPromise) {
+      logger?.debug("Skipped mid-run Reflector: Reflector already running");
       return;
     }
 
     const generation = sessionGeneration;
-
+    const agentRoundAtStart = grcState.currentAgentRound;
+    const runTurnAtStart = currentRun.turnCount;
+    const userTurnAtStart = getCurrentUserTurnCount();
     const conversation = serializeConversation(ctx.sessionManager.getBranch(), {
       maxTokens: 16000,
       preserveFirstUserMessage: true,
-      preserveRecentTurns: config.grc.curatorKeepRecentTurns,
+      preserveRecentTurns: Math.max(1, config.grc.keepRecentAgentRounds),
       includeToolResults: true,
       toolResultMaxChars: 1000,
     });
+    const reflectorGoalState = grcState.curator.lastGoalState;
+    const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
 
     if (!conversation.trim()) {
-      logger.warn("Skipped GRC background jobs: empty serialized conversation");
+      logger?.warn("Skipped mid-run Reflector: empty serialized conversation");
+      return;
+    }
+
+    logger?.debug(
+      `Mid-run stuck detected (runTurn=${runTurnAtStart}, threshold=${config.grc.midRunTurnThreshold}, agentRound=${agentRoundAtStart}, turnRound=${grcState.currentTurnRound}, userTurns=${userTurnAtStart}) -> starting Reflector`,
+    );
+    appendMidRunDebugEntry(pi, {
+      phase: "triggered",
+      recordedAt: new Date().toISOString(),
+      sessionGeneration: generation,
+      runTurn: runTurnAtStart,
+      threshold: getMidRunThreshold(),
+      agentRound: agentRoundAtStart,
+      userTurns: userTurnAtStart,
+      currentRunActive: currentRun.active,
+      stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+    });
+
+    reflectorStartedAt = Date.now();
+    grcState = updateReflectorStatus(grcState, "running");
+    refreshWidget(ctx);
+
+    reflectorPromise = executeReflector(conversation, reflectorGoalState, reflectorGoalContext, ctx, config.grc, logger)
+      .then((result) => {
+        if (!grcState || !sessionActive || generation !== sessionGeneration || !isRuntimeEnabled()) return;
+        const processedUserTurns = Math.max(grcState.reflector.processedUpToTurn, userTurnAtStart);
+        const processedAgentRound = Math.max(grcState.reflector.processedUpToAgentRound, agentRoundAtStart);
+        if (!result || !result.hasSubstantiveContent) {
+          grcState = updateReflectorStatus(grcState, "done", null, processedUserTurns, processedAgentRound, agentRoundAtStart);
+          reflectorStartedAt = null;
+          appendMidRunDebugEntry(pi, {
+            phase: "finished-no-advice",
+            recordedAt: new Date().toISOString(),
+            sessionGeneration: generation,
+            runTurn: runTurnAtStart,
+            threshold: getMidRunThreshold(),
+            agentRound: agentRoundAtStart,
+            userTurns: userTurnAtStart,
+            currentRunActive: currentRun.active,
+            stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+            processedUpToUserTurn: processedUserTurns,
+          });
+          logger?.debug(
+            `Mid-run Reflector finished (no substantive advice, runTurn=${runTurnAtStart}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`,
+          );
+          refreshWidget(ctx);
+          return;
+        }
+
+        grcState = updateReflectorStatus(grcState, "done", result.advice, processedUserTurns, processedAgentRound, agentRoundAtStart);
+        reflectorStartedAt = null;
+
+        if (!currentRun.active) {
+          appendMidRunDebugEntry(pi, {
+            phase: "finished-after-agent-end",
+            recordedAt: new Date().toISOString(),
+            sessionGeneration: generation,
+            runTurn: runTurnAtStart,
+            threshold: getMidRunThreshold(),
+            agentRound: agentRoundAtStart,
+            userTurns: userTurnAtStart,
+            currentRunActive: currentRun.active,
+            stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+            processedUpToUserTurn: processedUserTurns,
+            adviceChars: result.advice.length,
+          });
+          logger?.debug("Mid-run Reflector finished after agent_end; steer skipped");
+          refreshWidget(ctx);
+          return;
+        }
+        if (currentRun.stuckReflectorDelivered) {
+          appendMidRunDebugEntry(pi, {
+            phase: "duplicate-delivery-skipped",
+            recordedAt: new Date().toISOString(),
+            sessionGeneration: generation,
+            runTurn: runTurnAtStart,
+            threshold: getMidRunThreshold(),
+            agentRound: agentRoundAtStart,
+            userTurns: userTurnAtStart,
+            currentRunActive: currentRun.active,
+            stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+            processedUpToUserTurn: processedUserTurns,
+            adviceChars: result.advice.length,
+          });
+          logger?.debug("Mid-run Reflector advice already delivered; skipping duplicate steer");
+          refreshWidget(ctx);
+          return;
+        }
+
+        pi.sendMessage(
+          {
+            customType: "grc-mid-run-reflection-steer",
+            content: buildReflectorInjection(result.advice),
+            display: false,
+          },
+          { deliverAs: "steer" },
+        );
+        currentRun.stuckReflectorDelivered = true;
+        appendMidRunDebugEntry(pi, {
+          phase: "delivered",
+          recordedAt: new Date().toISOString(),
+          sessionGeneration: generation,
+          runTurn: runTurnAtStart,
+          threshold: getMidRunThreshold(),
+          agentRound: agentRoundAtStart,
+          userTurns: userTurnAtStart,
+          currentRunActive: currentRun.active,
+          stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+          processedUpToUserTurn: processedUserTurns,
+          adviceChars: result.advice.length,
+        });
+        setTransientGRCStatus(ctx, "运行中反思已注入");
+        logger?.debug(`Mid-run Reflector delivered via steer (runTurn=${runTurnAtStart}, adviceChars=${result.advice.length}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`);
+        refreshWidget(ctx);
+      })
+      .catch((err) => {
+        if (!grcState || generation !== sessionGeneration || !isRuntimeEnabled()) return;
+        grcState = updateReflectorStatus(grcState, "failed");
+        reflectorStartedAt = null;
+        appendMidRunDebugEntry(pi, {
+          phase: "failed",
+          recordedAt: new Date().toISOString(),
+          sessionGeneration: generation,
+          runTurn: runTurnAtStart,
+          threshold: getMidRunThreshold(),
+          agentRound: agentRoundAtStart,
+          userTurns: userTurnAtStart,
+          currentRunActive: currentRun.active,
+          stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+          missingAuth: isMissingAuthError(err),
+          error: formatErrorMessage(err),
+        });
+        logger?.warn("Mid-run Reflector failed:", err);
+        refreshWidget(ctx);
+        if (isMissingAuthError(err)) {
+          logger?.warn("Mid-run Reflector disabled for this cycle due to missing model auth/config");
+          void safeNotify(ctx, "运行中 Reflector 不可用：缺少模型配置或 API Key，本轮已跳过。", "warning");
+        }
+      })
+      .finally(() => {
+        logger?.debug("Mid-run Reflector promise cleared");
+        reflectorPromise = null;
+      });
+  }
+
+  function startGRCBackgroundJobs(ctx: ExtensionContext, targets: GRCJobTargets = "reflector"): void {
+    if (!config || !logger || !grcState || !sessionActive || !principles) {
+      logger?.debug("Skipped GRC background jobs: extension state not ready", {
+        hasConfig: Boolean(config),
+        hasLogger: Boolean(logger),
+        hasGRCState: Boolean(grcState),
+        hasPrinciples: Boolean(principles),
+        sessionActive,
+        targets,
+      });
+      return;
+    }
+    if (!isRuntimeEnabled()) {
+      logger?.debug(`Skipped GRC background jobs: runtimeMode=off (targets=${targets})`);
+      return;
+    }
+    if (!isGRCAutoProcessingAllowed()) {
+      logger?.debug(`Skipped GRC background jobs due to orchestrator guard (targets=${targets}, reason=${orchestrationReason || "unknown"})`);
+      return;
+    }
+
+    const needReflector = targets === "reflector";
+    const needCurator = targets === "curator";
+
+    if ((needReflector && reflectorPromise) || (needCurator && curatorPromise)) {
+      logger?.info(
+        `Skipped GRC background jobs because subagent is already running (targets=${targets}, reflectorRunning=${Boolean(reflectorPromise)}, curatorRunning=${Boolean(curatorPromise)})`,
+      );
+      return;
+    }
+
+    const generation = sessionGeneration;
+    const currentAgentRound = grcState.currentAgentRound;
+    const targetPreviousAgentRound = grcState.totalAgentRounds;
+    const userTurnAtStart = getCurrentUserTurnCount();
+
+    const branch = ctx.sessionManager.getBranch();
+    const reflectorConversation = serializeConversation(branch, {
+      maxTokens: 16000,
+      preserveFirstUserMessage: true,
+      preserveRecentTurns: Math.max(1, config.grc.keepRecentAgentRounds),
+      includeToolResults: true,
+      toolResultMaxChars: 1000,
+    });
+    const previousRoundConversation = serializePreviousAgentRoundConversation(branch, (entries) =>
+      serializeConversation(entries, {
+        maxTokens: 16000,
+        preserveFirstUserMessage: true,
+        preserveRecentTurns: Math.max(1, config.grc.keepRecentAgentRounds),
+        includeToolResults: true,
+        toolResultMaxChars: 1000,
+      })
+    );
+    const currentUserMessage = getLatestUserMessageText(branch);
+    const previousAgentRoundMessageCount = getPreviousAgentRoundEntries(branch).length;
+    const reflectorGoalState = grcState.curator.lastGoalState;
+    const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
+
+    logger?.debug(
+      `Preparing GRC background jobs (targets=${targets}, generation=${generation}, currentAgentRound=${currentAgentRound}, targetPreviousAgentRound=${targetPreviousAgentRound}, turnRound=${grcState.currentTurnRound}, userTurns=${userTurnAtStart}, mode=${grcState.mode}, runtimeMode=${grcState.runtimeMode}, reflectorConversationChars=${reflectorConversation.length}, previousRoundConversationChars=${previousRoundConversation.length}, previousAgentRoundMessages=${previousAgentRoundMessageCount}, currentUserMessageChars=${currentUserMessage.length}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`,
+    );
+
+    if (needReflector && !reflectorConversation.trim()) {
+      logger.warn("Skipped Reflector: empty serialized conversation");
+      return;
+    }
+
+    if (needCurator && !previousRoundConversation.trim()) {
+      logger?.debug("Skipped Curator: no previous agent-round conversation available");
+      return;
+    }
+
+    if (needCurator && !currentUserMessage.trim()) {
+      logger?.debug("Skipped Curator: missing current user message");
       return;
     }
 
     if (needReflector) {
+      logger?.debug(`Starting Reflector (agentRound=${currentAgentRound}, userTurns=${userTurnAtStart}, generation=${generation})`);
+      reflectorStartedAt = Date.now();
       grcState = updateReflectorStatus(grcState, "running");
-      reflectorPromise = executeReflector(conversation, ctx, config.grc, logger)
+      refreshWidget(ctx);
+      reflectorPromise = executeReflector(reflectorConversation, reflectorGoalState, reflectorGoalContext, ctx, config.grc, logger)
         .then((result) => {
-          if (!grcState || !sessionActive || generation !== sessionGeneration) return;
+          if (!grcState || !sessionActive || generation !== sessionGeneration || !isRuntimeEnabled()) return;
+          const processedUserTurns = Math.max(grcState.reflector.processedUpToTurn, userTurnAtStart);
+          const processedAgentRound = Math.max(grcState.reflector.processedUpToAgentRound, currentAgentRound);
           if (!result || !result.hasSubstantiveContent) {
-            grcState = updateReflectorStatus(grcState, "done", null, grcState.turnCount);
-            logger?.info("Reflector finished (no substantive advice)");
+            grcState = updateReflectorStatus(grcState, "done", null, processedUserTurns, processedAgentRound, currentAgentRound);
+            reflectorStartedAt = null;
+            logger?.debug(`Reflector finished (no substantive advice, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`);
+            refreshWidget(ctx);
             return;
           }
-          grcState = updateReflectorStatus(grcState, "done", result.advice, grcState.turnCount);
-          logger?.info("Reflector finished");
-          setTransientGRCStatus(ctx, "◆ Reflector ready");
+          grcState = updateReflectorStatus(grcState, "done", result.advice, processedUserTurns, processedAgentRound, currentAgentRound);
+          reflectorStartedAt = null;
+          logger?.debug(`Reflector finished (adviceChars=${result.advice.length}, principleOps=${result.principleOps.length}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)})`);
+
+          if (result.principleOps.length > 0) {
+            void principles
+              .applyPrincipleOps(result.principleOps, {
+                source: `${sessionDisplayName}-agent-${currentAgentRound}`,
+                hardMaxCount: Math.max(config.grc.maxPrinciples, 200),
+              })
+              .then(({ changed, deleted }) => {
+                const diagnostics = principles.getDiagnostics();
+                logger?.debug(
+                  `Applied ${result.principleOps.length} reflector principle ops (changed=${changed}, deleted=${deleted}, totals=${summarizePrincipleOps(result.principleOps)}, cumulativeCreate=${diagnostics.audit.effects.created}, cumulativeReuse=${diagnostics.audit.effects.reused}, cumulativeMerge=${diagnostics.audit.effects.merged}, cumulativeConflict=${diagnostics.audit.effects.conflicted})`,
+                );
+              })
+              .catch((err) => {
+                logger?.warn("Failed to apply reflector principle ops:", err);
+              });
+          }
+
+          setTransientGRCStatus(ctx, result.principleOps.length > 0 ? `反思完成 + 原则${result.principleOps.length}条` : "反思完成");
+          refreshWidget(ctx);
         })
         .catch((err) => {
-          if (!grcState || generation !== sessionGeneration) return;
+          if (!grcState || generation !== sessionGeneration || !isRuntimeEnabled()) return;
           grcState = updateReflectorStatus(grcState, "failed");
+          reflectorStartedAt = null;
           logger?.warn("Reflector failed:", err);
+          refreshWidget(ctx);
           if (isMissingAuthError(err)) {
             logger?.warn("Reflector disabled for this cycle due to missing model auth/config");
             void safeNotify(ctx, "Reflector 不可用：缺少模型配置或 API Key，本轮已跳过。", "warning");
           }
         })
         .finally(() => {
+          logger?.debug("Reflector promise cleared");
           reflectorPromise = null;
         });
     }
 
     if (needCurator) {
+      logger?.debug(`Starting Curator (targetPreviousAgentRound=${targetPreviousAgentRound}, currentAgentRound=${currentAgentRound}, userTurns=${userTurnAtStart}, generation=${generation})`);
+      curatorStartedAt = Date.now();
       grcState = updateCuratorStatus(grcState, "running");
-      curatorPromise = executeCurator(conversation, ctx, config.grc, logger)
+      refreshWidget(ctx);
+      curatorPromise = executeCurator(
+        previousRoundConversation,
+        currentUserMessage,
+        ctx,
+        config.grc,
+        logger,
+        undefined,
+        grcState.curator.lastGoalState,
+        targetPreviousAgentRound,
+      )
         .then((result) => {
-          if (!grcState || !sessionActive || generation !== sessionGeneration) return;
+          if (!grcState || !sessionActive || generation !== sessionGeneration || !isRuntimeEnabled()) return;
+          const processedUserTurns = Math.max(grcState.curator.processedUpToTurn, userTurnAtStart);
+          const processedAgentRound = Math.max(grcState.curator.processedUpToAgentRound, targetPreviousAgentRound);
           if (!result) {
-            grcState = updateCuratorStatus(grcState, "done", null, grcState.turnCount, 0);
+            grcState = updateCuratorStatus(grcState, "done", null, processedUserTurns, 0, undefined, undefined, undefined, undefined, processedAgentRound, targetPreviousAgentRound);
+            curatorStartedAt = null;
+            refreshWidget(ctx);
             return;
           }
-          grcState = updateCuratorStatus(
+          const rejectionReasons = getCuratorGoalStateRejectionReasons(grcState.curator.lastGoalState, result);
+          if (rejectionReasons.length > 0) {
+            logger?.debug(
+              `Curator structured payload rejected (reasons=${rejectionReasons.join(",")}, previousActive=${grcState.curator.lastGoalState?.active.length ?? 0}, hasGoalState=${Boolean(result.goalState)}, nextActive=${result.goalState?.active.length ?? 0}, hasSummaryEntry=${Boolean(result.summaryEntry)}, summaryGoal=${JSON.stringify(result.summaryEntry?.summary.goal ?? "")}, closureEvidence=${result.closureEvidence.length})`,
+            );
+          }
+          const reconciledResult = reconcileCuratorGoalState(grcState.curator.lastGoalState, result);
+          const normalizedSummaryEntry = reconciledResult?.summaryEntry ?? null;
+          const normalizedGoalState = reconciledResult?.goalState ?? null;
+          const normalizedSignal = reconciledResult?.signal ?? null;
+          let nextState = updateCuratorStatus(
             grcState,
             "done",
-            result.summary,
-            grcState.turnCount,
-            result.principles.length,
+            reconciledResult?.summary ?? result.summary,
+            processedUserTurns,
+            0,
+            normalizedSummaryEntry ?? undefined,
+            normalizedGoalState ?? undefined,
+            undefined,
+            normalizedSignal ?? undefined,
+            processedAgentRound,
+            targetPreviousAgentRound,
           );
-          logger?.info("Curator finished");
-
-          if (principles && result.principles.length > 0) {
-            void principles
-              .addMany(result.principles, {
-                source: `${sessionDisplayName}-turn-${grcState.turnCount}`,
-                maxCount: config.grc.maxPrinciples,
-              })
-              .then((savedCount) => {
-                if (savedCount > 0) {
-                  logger?.info(`Saved ${savedCount} principles`);
-                }
-              })
-              .catch((err) => {
-                logger?.warn("Failed to save principles:", err);
-              });
+          if (normalizedSummaryEntry) {
+            const pushed = pushSummaryCacheEntry(nextState, normalizedSummaryEntry, config.grc.summaryCacheSize);
+            nextState = pushed.state;
+            if (pushed.evicted) {
+              logger?.debug(`SummaryCache evicted round ${pushed.evicted.agentRound} due to maxSize=${config.grc.summaryCacheSize}`);
+            }
           }
+          grcState = nextState;
+          appendCuratorArtifactEntry(pi, {
+            customType: "grc-curator-artifact",
+            agentRound: targetPreviousAgentRound,
+            recordedAt: new Date().toISOString(),
+            processedUpToUserTurn: processedUserTurns,
+            summary: reconciledResult?.summary ?? result.summary,
+            summaryEntry: normalizedSummaryEntry,
+            goalState: normalizedGoalState,
+            signal: reconciledResult?.signal ?? result.signal,
+          });
+          curatorStartedAt = null;
+          logger?.debug(
+            `Curator finished (summaryChars=${result.summary.length}, hasSummaryEntry=${Boolean(normalizedSummaryEntry)}, summaryCache=${grcState.curator.summaryCache.length}, hasGoalState=${Boolean(normalizedGoalState)}, signal=${normalizedSignal?.type ?? "none"}, processedUpToAgentRound=${processedAgentRound})`,
+          );
 
-          setTransientGRCStatus(ctx, `◆ Curator ready (${result.principles.length} principles)`);
+          setTransientGRCStatus(ctx, normalizedGoalState ? "梳理完成 + 目标更新" : "梳理完成");
+          refreshWidget(ctx);
         })
         .catch((err) => {
-          if (!grcState || generation !== sessionGeneration) return;
+          if (!grcState || generation !== sessionGeneration || !isRuntimeEnabled()) return;
           grcState = updateCuratorStatus(grcState, "failed");
+          curatorStartedAt = null;
           logger?.warn("Curator failed:", err);
+          refreshWidget(ctx);
           if (isMissingAuthError(err)) {
             logger?.warn("Curator disabled for this cycle due to missing model auth/config");
             void safeNotify(ctx, "Curator 不可用：缺少模型配置或 API Key，本轮已跳过。", "warning");
           }
         })
         .finally(() => {
+          logger?.debug("Curator promise cleared");
           curatorPromise = null;
         });
     }
@@ -290,7 +930,7 @@ export default function (pi: ExtensionAPI) {
       sessionActive = true;
       sessionGeneration += 1;
       config = await ensureConfigExists();
-      logger = createLogger(config.logLevel);
+      logger = createLogger(config.logLevel, config.logEnabled);
 
       // Initialize modules
       compaction = createCompactionHandler(config.compaction, logger);
@@ -312,6 +952,8 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Restore any persisted state from previous session
+      const curatorArtifacts: CuratorArtifactEntry[] = [];
+      let curatorArtifactsRejected = 0;
       for (const entry of ctx.sessionManager.getBranch()) {
         if (entry.type === "custom" && entry.customType === "passto-context-state") {
           const data = entry.data as Parameters<ReturnType<typeof createContextTracker>["restore"]>[0] | undefined;
@@ -323,6 +965,16 @@ export default function (pi: ExtensionAPI) {
         if (entry.type === "custom" && entry.customType === "grc-state") {
           grcState = restoreGRCState(entry.data);
         }
+
+        if (entry.type === "custom" && entry.customType === "grc-curator-artifact") {
+          const parsed = parseCuratorArtifactEntry(entry.data);
+          if (parsed) {
+            curatorArtifacts.push(parsed);
+          } else {
+            curatorArtifactsRejected += 1;
+          }
+        }
+
       }
 
       // Ensure GRC directories exist
@@ -333,16 +985,36 @@ export default function (pi: ExtensionAPI) {
         logger?.info(`Pruned ${pruned} overflow principles during session start`);
       }
 
+      const restoreResult = restoreCuratorStateFromBranchEntries(grcState, ctx.sessionManager.getBranch() as Array<{ type?: string; customType?: string; data?: unknown }>, config.grc.summaryCacheSize);
+      grcState = restoreResult.state;
+      curatorArtifactsRejected = restoreResult.curatorArtifactsRejected;
+      if (restoreResult.restoredCuratorArtifactRounds.length > 0) {
+        const restoredRounds = restoreResult.restoredCuratorArtifactRounds.join(",");
+        const goalStateRound = grcState.curator.lastGoalState?.agentRound ?? "none";
+        logger?.info(
+          `Restored ${restoreResult.restoredCuratorArtifactRounds.length} curator artifacts from branch history (rejected=${curatorArtifactsRejected}, summaryCacheRounds=${restoredRounds}, goalStateRound=${goalStateRound})`,
+        );
+      } else if (curatorArtifactsRejected > 0) {
+        logger?.warn(`Skipped ${curatorArtifactsRejected} invalid curator artifacts during restore`);
+      }
+
+
       if (grcState) {
         grcState = clearRunningSubagentStatuses(grcState);
       }
 
       logger?.info("PasstoContext loaded");
+      logger?.info(
+        `Config loaded (logEnabled=${config.logEnabled}, logLevel=${config.logLevel}, memory=${config.memory.enabled}, tracking=${config.tracking.enabled}, grc=${config.grc.enabled})`,
+      );
       logger?.debug("GRC state initialized:", grcState);
 
-      // Notify user
+      updateOrchestrationSuspension(ctx);
+
+      // Keep startup notify, but avoid runtime shared-notification noise.
       if (ctx.hasUI) {
         ctx.ui.notify("PasstoContext ready", "info");
+        refreshWidget(ctx);
       }
     } catch (err) {
       // Init failure should not break Pi
@@ -356,19 +1028,26 @@ export default function (pi: ExtensionAPI) {
   // ===========================================================================
 
   pi.on("session_before_compact", async (event, ctx) => {
-    if (!config?.compaction.enabled || !compaction) {
+    if (!config?.compaction.enabled || !compaction || !isRuntimeEnabled()) {
       return; // Let Pi use default compaction
     }
 
     try {
       const curatorSummary =
         config.grc.enabled &&
-        grcState?.manualMode !== "forced-off" &&
-        grcState?.mode === "grc" &&
-        grcState.curator.status === "done" &&
+        !orchestrationSuspended &&
+        grcState?.curator.status === "done" &&
         grcState.curator.lastSummary
           ? grcState.curator.lastSummary
           : undefined;
+
+      logger?.debug(
+        `session_before_compact: using ${curatorSummary ? "curator-summary" : "pi-default"} path (runtimeMode=${grcState?.runtimeMode ?? "n/a"}, grcEnabled=${config.grc.enabled}, suspended=${orchestrationSuspended}, mode=${grcState?.mode ?? "n/a"}, curatorStatus=${grcState?.curator.status ?? "n/a"})`,
+      );
+
+      if (!curatorSummary) {
+        return undefined;
+      }
 
       const result = await compaction.handleCompaction(event, ctx, {
         curatorSummary,
@@ -400,38 +1079,99 @@ export default function (pi: ExtensionAPI) {
   // Before Agent Start (Memory Injection)
   // ===========================================================================
 
-  pi.on("before_agent_start", async (event, _ctx) => {
+  pi.on("before_agent_start", async (event, ctx) => {
     if (!config) {
       return;
     }
 
     try {
-      let systemPrompt = event.systemPrompt;
+      updateOrchestrationSuspension(ctx);
 
-      const grcPromptEnabled = config.grc.enabled && grcState?.manualMode !== "forced-off";
+      if (!isRuntimeEnabled()) {
+        logger?.debug("before_agent_start skipped runtime injections: runtimeMode=off");
+        return;
+      }
+
+      if (grcState && !curatorPromise) {
+        const curatorAutoEnabled = config.grc.enabled;
+        if (curatorAutoEnabled && isGRCAutoProcessingAllowed()) {
+          startGRCBackgroundJobs(ctx, "curator");
+        }
+      }
+
+      let systemPrompt = event.systemPrompt;
+      const injectionDiagnostics: string[] = [];
+
+      const grcPromptEnabled = config.grc.enabled && !orchestrationSuspended;
       if (grcPromptEnabled) {
         systemPrompt += `\n\n${buildBaseGRCPrompt()}`;
+        injectionDiagnostics.push("base-grc");
+      } else {
+        injectionDiagnostics.push(
+          `base-grc:skip(grcEnabled=${config.grc.enabled}, suspended=${orchestrationSuspended}, runtimeMode=${grcState?.runtimeMode ?? "n/a"})`,
+        );
+      }
+
+      if (grcPromptEnabled && grcState?.curator.lastGoalState) {
+        const goalStateInjection = buildGoalStateInjection(grcState.curator.lastGoalState, config.grc.maxGoalStateActive);
+        if (goalStateInjection) {
+          systemPrompt += `\n\n${goalStateInjection}`;
+          injectionDiagnostics.push(`goal-state(${goalStateInjection.length} chars)`);
+        }
+      } else {
+        injectionDiagnostics.push(`goal-state:skip(enabled=${grcPromptEnabled}, hasGoalState=${Boolean(grcState?.curator.lastGoalState)})`);
+      }
+
+      if (grcPromptEnabled && grcState && grcState.curator.summaryCache.length > 0) {
+        const injectedSummaryCacheRounds = grcState.curator.summaryCache
+          .filter((entry) => entry.agentRound <= Math.max(0, grcState.currentAgentRound - config.grc.keepRecentAgentRounds))
+          .map((entry) => entry.agentRound);
+        const summaryCacheInjection = buildSummaryCacheInjection(
+          grcState.curator.summaryCache,
+          config.grc.summaryCacheSize,
+          config.grc.keepRecentAgentRounds,
+        );
+        if (summaryCacheInjection) {
+          systemPrompt += `\n\n${summaryCacheInjection}`;
+          injectionDiagnostics.push(`summary-cache(${injectedSummaryCacheRounds.join(",") || "none"}/${summaryCacheInjection.length} chars)`);
+        } else {
+          injectionDiagnostics.push(`summary-cache:skip-all-overlap(total=${grcState.curator.summaryCache.length}, keepRecentAgentRounds=${config.grc.keepRecentAgentRounds})`);
+        }
+      } else {
+        injectionDiagnostics.push(`summary-cache:skip(enabled=${grcPromptEnabled}, size=${grcState?.curator.summaryCache.length ?? 0})`);
       }
 
       if (grcState?.mode === "grc" && grcState.reflector.status === "done" && grcState.reflector.lastAdvice) {
         const reflectorInjection = buildReflectorInjection(grcState.reflector.lastAdvice);
         if (reflectorInjection) {
           systemPrompt += `\n${reflectorInjection}`;
+          injectionDiagnostics.push(`reflector(${reflectorInjection.length} chars)`);
         }
+      } else {
+        injectionDiagnostics.push(
+          `reflector:skip(mode=${grcState?.mode ?? "n/a"}, status=${grcState?.reflector.status ?? "n/a"}, hasAdvice=${Boolean(grcState?.reflector.lastAdvice)})`,
+        );
       }
 
       if (grcPromptEnabled && principles && config.grc.maxPrinciplesInjection > 0) {
-        const relevantPrinciples = principles.search(event.prompt, config.grc.maxPrinciplesInjection);
-        if (relevantPrinciples.length > 0) {
-          const injection = formatPrinciplesForInjection(relevantPrinciples);
+        const injectablePrinciples = principles.listInjectable(config.grc.maxPrinciplesInjection);
+        if (injectablePrinciples.length > 0) {
+          const injection = formatPrinciplesForInjection(injectablePrinciples);
           if (injection) {
             systemPrompt += `\n\n${injection}`;
-            logger?.debug(`Injected ${relevantPrinciples.length} principles (${injection.length} chars)`);
-            void principles.markUsed(relevantPrinciples).catch((err) => {
+            logger?.debug(`Injected ${injectablePrinciples.length} principles (${injection.length} chars)`);
+            injectionDiagnostics.push(`principles(${injectablePrinciples.length}/${injection.length} chars)`);
+            void principles.markUsed(injectablePrinciples).catch((err) => {
               logger?.warn("Failed to update principle usage:", err);
             });
           }
+        } else {
+          injectionDiagnostics.push("principles:0");
         }
+      } else {
+        injectionDiagnostics.push(
+          `principles:skip(enabled=${Boolean(principles)}, max=${config.grc.maxPrinciplesInjection}, grcPromptEnabled=${grcPromptEnabled})`,
+        );
       }
 
       if (config.memory.enabled && memory) {
@@ -441,9 +1181,18 @@ export default function (pi: ExtensionAPI) {
           if (injection) {
             systemPrompt += `\n\n${injection}`;
             logger?.debug(`Injected ${memories.length} memories (${injection.length} chars)`);
+            injectionDiagnostics.push(`memories(${memories.length}/${injection.length} chars)`);
           }
+        } else {
+          injectionDiagnostics.push("memories:0");
         }
+      } else {
+        injectionDiagnostics.push(`memories:skip(enabled=${config.memory.enabled}, manager=${Boolean(memory)})`);
       }
+
+      logger?.debug(
+        `before_agent_start injection summary: ${injectionDiagnostics.join(" | ")} | state(mode=${grcState?.mode ?? "n/a"}, runtimeMode=${grcState?.runtimeMode ?? "n/a"}, hasGoalState=${Boolean(grcState?.curator.lastGoalState)}, summaryCache=${grcState?.curator.summaryCache.length ?? 0}, lastSignal=${grcState?.curator.lastSignal?.type ?? "none"}, reflector=${grcState?.reflector.status ?? "n/a"}, curator=${grcState?.curator.status ?? "n/a"})`,
+      );
 
       if (systemPrompt !== event.systemPrompt) {
         return { systemPrompt };
@@ -459,41 +1208,91 @@ export default function (pi: ExtensionAPI) {
   // Context Optimization
   // ===========================================================================
 
-  pi.on("context", async (event, _ctx) => {
+  pi.on("context", async (event, ctx) => {
     if (!config || !grcState) {
       return;
     }
 
     try {
-      if (grcState.manualMode === "forced-off") {
+      updateOrchestrationSuspension(ctx);
+      if (!isRuntimeEnabled()) {
+        logger?.debug("Skipped context optimization (runtimeMode=off)");
+        return;
+      }
+      if (orchestrationSuspended) {
+        logger?.debug(
+          `Skipped context optimization (runtimeMode=${grcState.runtimeMode}, suspended=${orchestrationSuspended}, reason=${orchestrationReason || "n/a"})`,
+        );
         return;
       }
 
-      if (grcState.curator.processedUpToTurn <= 0) {
+      if (grcState.mode !== "grc") {
+        logger?.debug(`Skipped context optimization (mode=${grcState.mode})`);
         return;
       }
 
-      if (grcState.mode !== "grc" || grcState.curator.status !== "done" || !grcState.curator.lastSummary) {
-        return;
-      }
+      const contextWindow = ctx.model?.contextWindow ?? null;
 
-      const messages = optimizeContextMessages(event.messages, {
-        summary: grcState.curator.lastSummary,
-        processedUpToTurn: grcState.curator.processedUpToTurn,
-        keepRecentTurns: config.grc.curatorKeepRecentTurns,
-      });
+      const branchMessages = contextWindow && contextWindow > 0
+        ? getSlidingWindowAgentRoundMessages(
+            ctx.sessionManager.getBranch(),
+            config.grc.keepRecentAgentRounds,
+            contextWindow,
+            config.grc.maxContextPercent,
+          )
+        : getRecentAgentRoundMessages(
+            ctx.sessionManager.getBranch(),
+            config.grc.keepRecentAgentRounds,
+          );
+
+      const messages = branchMessages.length > 0
+        ? mergeRecentAgentRoundMessagesWithContext(branchMessages, event.messages)
+        : event.messages;
+      const strategy = contextWindow && contextWindow > 0
+        ? "min-rounds+percent-threshold-window+event-tail"
+        : (branchMessages.length > 0 ? "recent-agent-rounds+event-tail" : "event-messages");
 
       if (messages !== event.messages) {
         logger?.info(
-          `Context optimized using curator summary: ${event.messages.length} -> ${messages.length} messages (processedUpToTurn=${grcState.curator.processedUpToTurn}, keepRecentTurns=${config.grc.curatorKeepRecentTurns})`,
+          `Context optimized using ${strategy}: ${event.messages.length} -> ${messages.length} messages (keepRecentAgentRounds=${config.grc.keepRecentAgentRounds}, maxContextPercent=${config.grc.maxContextPercent}, contextWindow=${contextWindow ?? "unknown"}, processedUpToAgentRound=${grcState.curator.processedUpToAgentRound}, hasGoalState=${Boolean(grcState.curator.lastGoalState)}, summaryCache=${grcState.curator.summaryCache.length})`,
         );
         return { messages };
       }
+
+      logger?.debug(
+        `Context optimization no-op (strategy=${strategy}, keepRecentAgentRounds=${config.grc.keepRecentAgentRounds}, maxContextPercent=${config.grc.maxContextPercent}, contextWindow=${contextWindow ?? "unknown"}, hasGoalState=${Boolean(grcState.curator.lastGoalState)}, summaryCache=${grcState.curator.summaryCache.length})`,
+      );
       return;
     } catch (err) {
       logger?.error("Context optimization failed:", err);
       return;
     }
+  });
+
+  // ===========================================================================
+  // Agent Start
+  // ===========================================================================
+
+  pi.on("agent_start", async (_event, ctx) => {
+    currentRun = {
+      active: true,
+      startedAt: Date.now(),
+      turnCount: 0,
+      stuckReflectorTriggered: false,
+      stuckReflectorDelivered: false,
+    };
+
+    if (grcState) {
+      grcState = startAgentRound(grcState);
+      appendAgentRoundBoundary(pi);
+      logger?.debug(
+        `Agent round started (currentAgentRound=${grcState.currentAgentRound}, totalCompleted=${grcState.totalAgentRounds})`,
+      );
+    } else {
+      logger?.debug("Run started without GRC state");
+    }
+
+    refreshWidget(ctx);
   });
 
   // ===========================================================================
@@ -506,52 +1305,41 @@ export default function (pi: ExtensionAPI) {
     }
 
     try {
-      if (config.tracking.enabled && tracker) {
+      updateOrchestrationSuspension(ctx);
+      if (currentRun.active) {
+        currentRun.turnCount += 1;
+      }
+      if (grcState) {
+        grcState = incrementTurnRound(grcState);
+      }
+
+      logger?.debug(
+        `turn_end received (trackerEnabled=${config.tracking.enabled}, suspended=${orchestrationSuspended}, agentRound=${grcState?.currentAgentRound ?? "n/a"}, turnRound=${grcState?.currentTurnRound ?? "n/a"}, runTurn=${currentRun.active ? currentRun.turnCount : "n/a"})`,
+      );
+
+      if (isRuntimeEnabled() && config.tracking.enabled && tracker) {
         tracker.onTurnEnd(event as Parameters<typeof tracker.onTurnEnd>[0], ctx);
 
-        // Update widget if enabled
-        if (config.tracking.showWidget && ctx.hasUI) {
-          const status = formatWidgetStatus(tracker.getState(), grcState);
-          ctx.ui.setWidget("passto-context", [status]);
-        }
-
-        // Persist tracker state every 5 turns
+        // Persist tracker state every 5 user turns
         const state = tracker.getState();
         if (state.turnCount > 0 && state.turnCount % 5 === 0) {
           pi.appendEntry("passto-context-state", state);
-          logger?.debug(`Persisted state at turn ${state.turnCount}`);
+          logger?.debug(`Persisted tracker state at userTurn ${state.turnCount}`);
         }
       }
 
-      if (grcState) {
-        grcState = incrementTurn(grcState);
+      refreshWidget(ctx);
 
-        if (shouldTriggerGRC(grcState, config.grc)) {
-          grcState = transitionToGRC(grcState, grcState.turnCount);
-          logger?.info(`GRC activated at turn ${grcState.turnCount}`);
-
-          pi.sendMessage(
-            {
-              customType: "grc-reflection-steer",
-              content: buildReflectionSteerPrompt(),
-              display: false,
-            },
-            { deliverAs: "steer" },
-          );
-
-          startGRCBackgroundJobs(ctx);
-
-          setTransientGRCStatus(ctx, "◆ GRC activated");
-        } else if (shouldTriggerNextCycle(grcState, config.grc)) {
-          grcState = markGRCTriggered(grcState, grcState.turnCount);
-          logger?.info(`GRC cycle ${grcState.grcCycleCount} triggered at turn ${grcState.turnCount}`);
-          startGRCBackgroundJobs(ctx);
-        }
-
-        if (grcState.turnCount > 0 && grcState.turnCount % 5 === 0) {
-          pi.appendEntry("grc-state", serializeGRCState(grcState));
-          logger?.debug(`Persisted GRC state at turn ${grcState.turnCount}`);
-        }
+      if (
+        isRuntimeEnabled()
+        && currentRun.active
+        && !currentRun.stuckReflectorTriggered
+        && currentRun.turnCount >= config.grc.midRunTurnThreshold
+        && !reflectorPromise
+        && !orchestrationSuspended
+      ) {
+        currentRun.stuckReflectorTriggered = true;
+        startMidRunReflector(ctx);
       }
     } catch (err) {
       logger?.error("Turn tracking failed:", err);
@@ -563,20 +1351,62 @@ export default function (pi: ExtensionAPI) {
   // ===========================================================================
 
   pi.on("agent_end", async (event, ctx) => {
-    if (!config?.tracking.enabled || !tracker) {
+    if (!config) {
       return;
     }
 
     try {
-      tracker.onAgentEnd(event as Parameters<typeof tracker.onAgentEnd>[0], ctx);
+      updateOrchestrationSuspension(ctx);
 
-      // Update widget with final state
-      if (config.tracking.showWidget && ctx.hasUI) {
-        const status = formatWidgetStatus(tracker.getState(), grcState);
-        ctx.ui.setWidget("passto-context", [status]);
+      if (isRuntimeEnabled() && config.tracking.enabled && tracker) {
+        tracker.onAgentEnd(event as Parameters<typeof tracker.onAgentEnd>[0], ctx);
       }
+
+      currentRun = createInitialCurrentRunState();
+
+      if (grcState) {
+        grcState = finishAgentRound(grcState);
+        const currentUserTurns = getCurrentUserTurnCount();
+        logger?.debug(
+          `agent_end received (completedAgentRounds=${grcState.totalAgentRounds}, currentAgentRound=${grcState.currentAgentRound}, userTurns=${currentUserTurns}, mode=${grcState.mode}, runtimeMode=${grcState.runtimeMode}, suspended=${orchestrationSuspended})`,
+        );
+
+        const autoAllowed = isGRCAutoProcessingAllowed();
+        const processingEnabled = isRuntimeEnabled() && config.grc.enabled;
+
+        if (!autoAllowed) {
+          logger?.debug(`Skipped post-round jobs due to orchestrator guard: ${orchestrationReason || "unknown"}`);
+          refreshWidget(ctx);
+        } else if (!processingEnabled) {
+          logger?.debug(
+            `Skipped post-round jobs (grcEnabled=${config.grc.enabled}, runtimeMode=${grcState.runtimeMode})`,
+          );
+        } else {
+          if (grcState.mode !== "grc") {
+            grcState = {
+              ...grcState,
+              mode: "grc",
+              activatedAtTurn: grcState.activatedAtTurn ?? grcState.totalAgentRounds,
+            };
+          }
+
+          const targets = getPostRoundTargets(grcState, config.grc);
+          logger?.debug(
+            `Post-round jobs scheduled (targets=${targets}, completedAgentRounds=${grcState.totalAgentRounds})`,
+          );
+          startGRCBackgroundJobs(ctx, targets);
+          setTransientGRCStatus(ctx, "已启动 post-round Reflector");
+        }
+
+        if (grcState.totalAgentRounds > 0 && grcState.totalAgentRounds % 5 === 0) {
+          pi.appendEntry("grc-state", serializeGRCState(grcState));
+          logger?.debug(`Persisted GRC state at totalAgentRounds=${grcState.totalAgentRounds}`);
+        }
+      }
+
+      refreshWidget(ctx);
     } catch (err) {
-      logger?.error("Agent end tracking failed:", err);
+      logger?.error("Agent end processing failed:", err);
     }
   });
 
@@ -593,13 +1423,18 @@ export default function (pi: ExtensionAPI) {
       if (grcState) {
         grcState = clearRunningSubagentStatuses(grcState);
       }
+      reflectorStartedAt = null;
+      curatorStartedAt = null;
+      syncWidgetTicker();
 
       // Persist final state
       if (tracker) {
         pi.appendEntry("passto-context-state", tracker.getState());
+        logger?.debug("Persisted passto-context-state during shutdown");
       }
       if (grcState) {
         pi.appendEntry("grc-state", serializeGRCState(grcState));
+        logger?.debug("Persisted grc-state during shutdown");
       }
 
       // Cleanup old memories
@@ -626,6 +1461,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       logger?.info("PasstoContext shutdown");
+      await logger?.flush?.();
       resetModuleState();
     } catch (err) {
       resetModuleState();
@@ -638,56 +1474,36 @@ export default function (pi: ExtensionAPI) {
   // ===========================================================================
 
   /**
-   * /ctx - Show session status, manage memories
+   * /ptc - PasstoContext minimal control surface
    */
-  pi.registerCommand("ctx", {
-    description: "PasstoContext: show session status, manage memories",
+  pi.registerCommand("ptc", {
+    description: "PasstoContext 控制台：status / on / off / config",
     handler: async (args, ctx) => {
-      // No args → show status
-      if (!args || args.trim() === "") {
-        return handleCtxStatus(ctx);
+      const input = args?.trim() ?? "";
+      if (!input) {
+        handlePTCStatus(ctx);
+        return;
       }
 
-      const parts = args.trim().split(/\s+/);
+      const parts = input.split(/\s+/);
       const subcommand = parts[0]?.toLowerCase();
-      const rest = parts.slice(1).join(" ");
 
       switch (subcommand) {
         case "status":
-          return handleCtxStatus(ctx);
-        case "save":
-          return handleCtxSave(ctx, rest);
-        case "search":
-          return handleCtxSearch(ctx, rest);
-        case "forget":
-          return handleCtxForget(ctx, rest);
-        case "list":
-          return handleCtxList(ctx);
+          handlePTCStatus(ctx);
+          return;
+        case "on":
+          await handlePTCOn(ctx);
+          return;
+        case "off":
+          await handlePTCOff(ctx);
+          return;
         case "config":
-          return handleCtxConfig(ctx);
-        case "inject":
-          return handleCtxInject(ctx, rest);
+          await handlePTCConfig(ctx);
+          return;
         default:
-          ctx.ui.notify(
-            `Unknown subcommand: ${subcommand}\n\n` +
-              "Available: status, save [tag], search <query>, forget <id>, list, config, inject <query>",
-            "warning",
-          );
+          ctx.ui.notify("Usage: /ptc [status|on|off|config]", "warning");
       }
-    },
-  });
-
-  pi.registerCommand("pta", {
-    description: "PasstoContext GRC control panel",
-    handler: async (args, ctx) => {
-      await handlePTACommand(args, ctx);
-    },
-  });
-
-  pi.registerCommand("PTA", {
-    description: "PasstoContext GRC control panel",
-    handler: async (args, ctx) => {
-      await handlePTACommand(args, ctx);
     },
   });
 
@@ -695,394 +1511,117 @@ export default function (pi: ExtensionAPI) {
   // Command Handlers
   // ===========================================================================
 
-  function handleCtxStatus(ctx: ExtensionCommandContext): void {
-    if (!tracker || !config) {
-      ctx.ui.notify("PasstoContext not initialized", "warning");
-      return;
-    }
-
-    const state = tracker.getState();
-    let text = `## PasstoContext Status\n\n`;
-
-    text += `- **Session**: \`${sessionDisplayName}\`\n`;
-    text += `- **Turns**: ${state.turnCount}\n`;
-
-    if (state.tokenUsage) {
-      text += `- **Tokens**: ${state.tokenUsage.current.toLocaleString()}`;
-      if (state.tokenUsage.limit) {
-        text += ` / ${state.tokenUsage.limit.toLocaleString()}`;
-        const pct = Math.round((state.tokenUsage.current / state.tokenUsage.limit) * 100);
-        text += ` (${pct}%)`;
-      }
-      text += "\n";
-    }
-
-    text += `- **Files modified**: ${state.filesModified.length}\n`;
-    if (state.filesModified.length > 0) {
-      for (const f of state.filesModified.slice(-10)) {
-        text += `  - \`${f}\`\n`;
-      }
-    }
-
-    if (Object.keys(state.toolsUsed).length > 0) {
-      text += `- **Tools used**: ${Object.entries(state.toolsUsed)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 5)
-        .map(([t, c]) => `${t} (${c}x)`)
-        .join(", ")}\n`;
-    }
-
-    const elapsed = Math.round((Date.now() - state.startTime) / 60000);
-    text += `- **Duration**: ${elapsed} minute${elapsed !== 1 ? "s" : ""}\n`;
-
-    if (memory && config.memory.enabled) {
-      text += `\n- **Memory items**: ${memory.list().length}\n`;
-    }
-
-    ctx.ui.notify(text, "info");
-  }
-
-  async function handleCtxSave(ctx: ExtensionCommandContext, tag: string): Promise<void> {
-    if (!memory || !config?.memory.enabled) {
-      ctx.ui.notify("Memory is disabled", "warning");
-      return;
-    }
-
-    const tagToUse = tag || "manual";
-
-    // Get current session state as summary
-    let summary = "";
-    if (tracker) {
-      summary = tracker.formatForInjection();
-    }
-
-    if (!summary) {
-      ctx.ui.notify("No session context to save", "warning");
-      return;
-    }
-
-    try {
-      const id = await memory.save({
-        type: "note",
-        tags: [tagToUse],
-        content: summary,
-      });
-      ctx.ui.notify(`Memory saved: \`${id}\``, "success");
-    } catch (err) {
-      ctx.ui.notify(`Failed to save memory: ${err}`, "error");
-    }
-  }
-
-  function handleCtxSearch(ctx: ExtensionCommandContext, query: string): void {
-    if (!memory || !config?.memory.enabled) {
-      ctx.ui.notify("Memory is disabled", "warning");
-      return;
-    }
-
-    if (!query) {
-      ctx.ui.notify("Usage: /ctx search <query>", "warning");
-      return;
-    }
-
-    const results = memory.search(query, 10);
-
-    if (results.length === 0) {
-      ctx.ui.notify(`No memories found for: "${query}"`, "info");
-      return;
-    }
-
-    let text = `## Memory Search: "${query}" (${results.length} results)\n\n`;
-    for (const item of results) {
-      const scoreStr = item.score !== undefined ? ` (score: ${item.score.toFixed(2)})` : "";
-      text += `### ${item.id}${scoreStr}\n`;
-      text += `Type: ${item.type} | Tags: ${item.tags.join(", ") || "none"}\n`;
-      text += `${item.content.slice(0, 200)}${item.content.length > 200 ? "..." : ""}\n\n`;
-    }
-
-    ctx.ui.notify(text, "info");
-  }
-
-  async function handleCtxForget(ctx: ExtensionCommandContext, id: string): Promise<void> {
-    if (!memory || !config?.memory.enabled) {
-      ctx.ui.notify("Memory is disabled", "warning");
-      return;
-    }
-
-    if (!id) {
-      ctx.ui.notify("Usage: /ctx forget <id>", "warning");
-      return;
-    }
-
-    const ok = await memory.forget(id);
-    if (ok) {
-      ctx.ui.notify(`Memory deleted: \`${id}\``, "success");
-    } else {
-      ctx.ui.notify(`Memory not found: \`${id}\``, "warning");
-    }
-  }
-
-  function handleCtxList(ctx: ExtensionCommandContext): void {
-    if (!memory || !config?.memory.enabled) {
-      ctx.ui.notify("Memory is disabled", "warning");
-      return;
-    }
-
-    const all = memory.list();
-
-    if (all.length === 0) {
-      ctx.ui.notify("No memories saved yet. Use `/ctx save <tag>` to save the current context.", "info");
-      return;
-    }
-
-    let text = `## Saved Memories (${all.length})\n\n`;
-    for (const item of all.slice(0, 20)) {
-      const date = new Date(item.created).toLocaleDateString();
-      text += `### ${item.id}\n`;
-      text += `Type: ${item.type} | Tags: ${item.tags.join(", ") || "none"} | Date: ${date}\n`;
-      text += `${item.content.slice(0, 150)}${item.content.length > 150 ? "..." : ""}\n\n`;
-    }
-
-    if (all.length > 20) {
-      text += `\n_Showing 20 of ${all.length} memories. Use \`/ctx search\` to find specific ones._`;
-    }
-
-    ctx.ui.notify(text, "info");
-  }
-
-  function handleCtxConfig(ctx: ExtensionCommandContext): void {
-    if (!config) {
-      ctx.ui.notify("PasstoContext not initialized", "warning");
-      return;
-    }
-
-    ctx.ui.notify(`## PasstoContext Config\n\n\`\`\`json\n${JSON.stringify(config, null, 2)}\n\`\`\``, "info");
-  }
-
-  async function handleCtxInject(ctx: ExtensionCommandContext, query: string): Promise<void> {
-    if (!memory || !config?.memory.enabled) {
-      ctx.ui.notify("Memory is disabled", "warning");
-      return;
-    }
-
-    if (!query) {
-      ctx.ui.notify("Usage: /ctx inject <query>", "warning");
-      return;
-    }
-
-    const results = memory.search(query, 3);
-    if (results.length === 0) {
-      ctx.ui.notify(`No relevant memories found for: "${query}"`, "info");
-      return;
-    }
-
-    const injection = memory.formatForInjection(results, config.memory.maxInjectionTokens);
-
-    // Show what would be injected and offer to send as a message
-    let preview = `## Would inject:\n\n${injection}\n\n`;
-    preview += "Use \`/ctx inject\` from \`before_agent_start\` — injecting directly is not possible from a command.";
-
-    ctx.ui.notify(preview, "info");
-  }
-
-  async function handlePTACommand(args: string | undefined, ctx: ExtensionCommandContext): Promise<void> {
-    const input = args?.trim() ?? "";
-    if (!input) {
-      handlePTAStatus(ctx);
-      return;
-    }
-
-    const parts = input.split(/\s+/);
-    const subcommand = parts[0]?.toLowerCase();
-    const rest = parts.slice(1).join(" ");
-
-    switch (subcommand) {
-      case "status":
-        handlePTAStatus(ctx);
-        return;
-      case "on":
-        await handlePTAOn(ctx);
-        return;
-      case "off":
-        await handlePTAOff(ctx);
-        return;
-      case "reflect":
-        await handlePTAReflect(ctx);
-        return;
-      case "curate":
-        await handlePTACurate(ctx);
-        return;
-      case "principles":
-        handlePTAPrinciples(ctx, rest);
-        return;
-      case "config":
-        handlePTAConfig(ctx);
-        return;
-      default:
-        ctx.ui.notify(
-          "Usage: /pta [status|on|off|reflect|curate|principles [query]|config]",
-          "warning",
-        );
-    }
-  }
-
-  function handlePTAStatus(ctx: ExtensionCommandContext): void {
+  function handlePTCStatus(ctx: ExtensionCommandContext): void {
     if (!config || !grcState) {
-      ctx.ui.notify("PasstoContext GRC not initialized", "warning");
+      ctx.ui.notify("PasstoContext not initialized", "warning");
       return;
     }
 
-    const trackerState = tracker?.getState();
     const principleCount = principles?.count() ?? 0;
     const currentUsage = ctx.getContextUsage();
+    const summaryCacheRounds = grcState.curator.summaryCache.map((entry) => entry.agentRound);
+    const latestSummaryEntry = grcState.curator.lastSummaryEntry;
+    const latestArtifactRound = latestSummaryEntry?.agentRound ?? grcState.curator.lastGoalState?.agentRound ?? null;
+    const state = tracker?.getState() ?? null;
 
-    let text = "## PTA / GRC Status\n\n";
-    text += `- **Session**: \`${sessionDisplayName}\`\n`;
-    text += `- **Enabled**: ${config.grc.enabled ? "yes" : "no"}\n`;
-    text += `- **Manual mode**: ${formatManualModeLabel(grcState)}\n`;
-    text += `- **Current mode**: ${grcState.mode}\n`;
-    text += `- **User turns**: ${trackerState?.turnCount ?? grcState.turnCount}\n`;
-    text += `- **GRC turns**: ${grcState.turnCount}\n`;
-    text += `- **GRC cycles**: ${grcState.grcCycleCount}\n`;
-    text += `- **Activated at turn**: ${grcState.activatedAtTurn ?? "N/A"}\n`;
-    text += `- **Last trigger turn**: ${grcState.lastGrcTriggerTurn}\n`;
-    text += `- **Reflector**: ${grcState.reflector.status} (processedUpToTurn=${grcState.reflector.processedUpToTurn})\n`;
-    text += `- **Curator**: ${grcState.curator.status} (processedUpToTurn=${grcState.curator.processedUpToTurn}, principles=${grcState.curator.principlesExtracted})\n`;
-    text += `- **Principles stored**: ${principleCount}\n`;
+    const contextUsageLabel = currentUsage?.tokens != null
+      ? `${currentUsage.tokens.toLocaleString()} / ${currentUsage.contextWindow.toLocaleString()}${currentUsage.percent != null ? ` (${Math.round(currentUsage.percent)}%)` : ""}`
+      : null;
 
-    if (currentUsage?.tokens != null) {
-      text += `- **Context usage**: ${currentUsage.tokens.toLocaleString()} / ${currentUsage.contextWindow.toLocaleString()}`;
-      if (currentUsage.percent != null) {
-        text += ` (${Math.round(currentUsage.percent)}%)`;
-      }
-      text += "\n";
-    }
-
-    if (grcState.reflector.lastAdvice) {
-      text += `\n### Latest Reflector Advice\n${grcState.reflector.lastAdvice}\n`;
-    }
-
-    if (grcState.curator.lastSummary) {
-      text += `\n### Latest Curator Summary\n${grcState.curator.lastSummary.slice(0, 1200)}`;
-      if (grcState.curator.lastSummary.length > 1200) {
-        text += "\n...";
-      }
-      text += "\n";
-    }
-
-    ctx.ui.notify(text, "info");
-  }
-
-  async function handlePTAOn(ctx: ExtensionCommandContext): Promise<void> {
-    if (!grcState) {
-      ctx.ui.notify("PasstoContext GRC not initialized", "warning");
-      return;
-    }
-
-    const wasRunning = grcState.reflector.status === "running" || grcState.curator.status === "running";
-    grcState = forceActivateGRC(grcState);
-    pi.appendEntry("grc-state", serializeGRCState(grcState));
-
-    if (!wasRunning) {
-      pi.sendMessage(
-        {
-          customType: "grc-reflection-steer",
-          content: buildReflectionSteerPrompt(),
-          display: false,
-        },
-        { deliverAs: "steer" },
-      );
-      startGRCBackgroundJobs(ctx);
-    }
-
-    setTransientGRCStatus(ctx, "◆ GRC forced on");
-    ctx.ui.notify("GRC 已强制开启。", "info");
-  }
-
-  async function handlePTAOff(ctx: ExtensionCommandContext): Promise<void> {
-    if (!grcState) {
-      ctx.ui.notify("PasstoContext GRC not initialized", "warning");
-      return;
-    }
-
-    grcState = setGRCManualMode(grcState, "forced-off");
-    pi.appendEntry("grc-state", serializeGRCState(grcState));
-    setTransientGRCStatus(ctx, "◆ GRC forced off");
-    ctx.ui.notify("GRC 已停用。自动触发和周期运行将暂停。", "info");
-  }
-
-  async function handlePTAReflect(ctx: ExtensionCommandContext): Promise<void> {
-    if (!config || !grcState) {
-      ctx.ui.notify("PasstoContext GRC not initialized", "warning");
-      return;
-    }
-    if (reflectorPromise) {
-      ctx.ui.notify("Reflector is already running", "warning");
-      return;
-    }
-
-    if (grcState.mode !== "grc") {
-      grcState = forceActivateGRC(grcState);
-    }
-
-    grcState = updateReflectorStatus(grcState, "idle");
-    startGRCBackgroundJobs(ctx, "reflector");
-    ctx.ui.notify("Reflector 已手动触发。", "info");
-  }
-
-  async function handlePTACurate(ctx: ExtensionCommandContext): Promise<void> {
-    if (!config || !grcState) {
-      ctx.ui.notify("PasstoContext GRC not initialized", "warning");
-      return;
-    }
-    if (curatorPromise) {
-      ctx.ui.notify("Curator is already running", "warning");
-      return;
-    }
-
-    if (grcState.mode !== "grc") {
-      grcState = forceActivateGRC(grcState);
-    }
-
-    grcState = updateCuratorStatus(grcState, "idle");
-    startGRCBackgroundJobs(ctx, "curator");
-    ctx.ui.notify("Curator 已手动触发。", "info");
-  }
-
-  function handlePTAPrinciples(ctx: ExtensionCommandContext, query: string): void {
-    if (!principles) {
-      ctx.ui.notify("Principles manager not initialized", "warning");
-      return;
-    }
-
-    const trimmed = query.trim();
-    const results = trimmed ? principles.search(trimmed, 10) : principles.list().slice(0, 20);
-
-    if (results.length === 0) {
-      ctx.ui.notify(trimmed ? `No principles found for: \"${trimmed}\"` : "No principles stored yet", "info");
-      return;
-    }
-
-    let text = trimmed
-      ? `## Principles Search: \"${trimmed}\" (${results.length})\n\n`
-      : `## Principles (${principles.count()})\n\n`;
-
-    for (const item of results) {
-      const scoreText = item.score != null ? ` | score=${item.score.toFixed(2)}` : "";
-      const hitText = item.metadata.hitCount != null ? ` | hits=${item.metadata.hitCount}` : "";
-      text += `### ${item.id}\n`;
-      text += `Tags: ${item.tags.join(", ") || "none"}${scoreText}${hitText}\n`;
-      text += `${item.content.slice(0, 220)}${item.content.length > 220 ? "..." : ""}\n\n`;
-    }
+    const text = formatPTCStatus({
+      sessionDisplayName,
+      configFileLabel: terminalFileLink(getConfigFilePath()),
+      runtimeModeLabel: grcState.runtimeMode,
+      memoryEnabled: config.memory.enabled,
+      trackingEnabled: config.tracking.enabled,
+      widgetEnabled: config.tracking.showWidget,
+      grcEnabled: config.grc.enabled,
+      currentMode: grcState.mode,
+      currentAgentRound: grcState.currentAgentRound,
+      currentTurnRound: grcState.currentTurnRound,
+      reflectorStatus: grcState.reflector.status,
+      lastReflectedAgentRound: grcState.reflector.lastReflectedAgentRound,
+      curatorStatus: grcState.curator.status,
+      lastCuratedAgentRound: grcState.curator.lastCuratedAgentRound,
+      summaryCacheRounds,
+      lastSignalLabel: grcState.curator.lastSignal
+        ? `${grcState.curator.lastSignal.type} (confidence=${grcState.curator.lastSignal.confidence})`
+        : "none",
+      latestCuratorArtifactRound: latestArtifactRound,
+      principlesStored: principleCount,
+      orchestratorGuardLabel: orchestrationSuspended ? `suspended (${orchestrationReason})` : "active",
+      contextUsageLabel,
+      sessionTurnCount: state?.turnCount ?? 0,
+      filesModifiedCount: state?.filesModified.length ?? 0,
+      latestReflectorAdvice: grcState.reflector.lastAdvice,
+      latestCuratorSummary: grcState.curator.lastSummary,
+      goalStateSnapshot: grcState.curator.lastGoalState
+        ? {
+            active: grcState.curator.lastGoalState.active.length,
+            completed: grcState.curator.lastGoalState.completed.length,
+            migrations: grcState.curator.lastGoalState.migrations.length,
+            pruned: grcState.curator.lastGoalState.prunedCount,
+            updatedRound: grcState.curator.lastGoalState.agentRound,
+          }
+        : null,
+    });
 
     ctx.ui.notify(text, "info");
   }
 
-  function handlePTAConfig(ctx: ExtensionCommandContext): void {
+  async function handlePTCOn(ctx: ExtensionCommandContext): Promise<void> {
+    if (!grcState || !config) {
+      ctx.ui.notify("PasstoContext not initialized", "warning");
+      return;
+    }
+
+    updateOrchestrationSuspension(ctx);
+    grcState = setRuntimeMode(grcState, "on");
+    pi.appendEntry("grc-state", serializeGRCState(grcState));
+    refreshWidget(ctx);
+
+    if (orchestrationSuspended) {
+      setTransientGRCStatus(ctx, "检测到编排流程，PTC 已让行");
+      ctx.ui.notify(`PasstoContext 已开启，但当前检测到外部编排流程：${orchestrationReason}`, "info");
+      return;
+    }
+
+    if (!reflectorPromise && !curatorPromise && config.grc.enabled) {
+      startGRCBackgroundJobs(ctx, getPostRoundTargets(grcState, config.grc));
+    }
+
+    setTransientGRCStatus(ctx, "PTC 已开启");
+    ctx.ui.notify("PasstoContext 已开启。运行时功能将按配置文件生效。", "info");
+  }
+
+  async function handlePTCOff(ctx: ExtensionCommandContext): Promise<void> {
+    if (!grcState) {
+      ctx.ui.notify("PasstoContext not initialized", "warning");
+      return;
+    }
+
+    grcState = setRuntimeMode(grcState, "off");
+    reflectorStartedAt = null;
+    curatorStartedAt = null;
+    widgetNotice = null;
+    pi.appendEntry("grc-state", serializeGRCState(grcState));
+    refreshWidget(ctx);
+    ctx.ui.notify("PasstoContext 已关闭。memory 注入、GRC、context 优化、自定义 compaction 与后台任务均已停用。", "info");
+  }
+
+  async function handlePTCConfig(ctx: ExtensionCommandContext): Promise<void> {
     if (!config) {
       ctx.ui.notify("PasstoContext not initialized", "warning");
       return;
     }
 
-    ctx.ui.notify(`## PTA / GRC Config\n\n\`\`\`json\n${JSON.stringify(config.grc, null, 2)}\n\`\`\``, "info");
+    const configPath = getConfigFilePath();
+    const result = await openConfigInSystemEditor(configPath);
+    if (result.ok) {
+      ctx.ui.notify("已打开 PasstoContext 配置文件。", "info");
+      return;
+    }
+
+    ctx.ui.notify(`打开配置文件失败：${result.reason}\n${terminalFileLink(configPath)}`, "error");
   }
 }

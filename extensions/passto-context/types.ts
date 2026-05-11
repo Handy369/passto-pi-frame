@@ -12,6 +12,7 @@ export interface PasstoContextConfig {
   memory: MemoryConfig;
   tracking: TrackingConfig;
   grc: GRCConfig;
+  logEnabled: boolean;
   logLevel: LogLevel;
 }
 
@@ -41,9 +42,19 @@ export interface TrackingConfig {
 
 export interface GRCConfig {
   enabled: boolean;
+  /** @deprecated v1.1 以后退出主调度 */
   grcTurnThreshold: number;
+  /** @deprecated v1.1 以后退出主调度 */
   grcCooldownTurns: number;
+  midRunTurnThreshold: number;
+  /** @deprecated v1.1 以后退出主调度 */
   curatorKeepRecentTurns: number;
+  /** @deprecated v1.1 以后退出主调度 */
+  curatorEveryAgentRounds: number;
+  keepRecentAgentRounds: number;
+  maxContextPercent: number;
+  summaryCacheSize: number;
+  maxGoalStateActive: number;
   subagentModel: string;
   subagentModelProvider: string;
   maxReflectorTokens: number;
@@ -51,6 +62,8 @@ export interface GRCConfig {
   principlesDir: string;
   maxPrinciplesInjection: number;
   maxPrinciples: number;
+  orchestratorToolPrefixes: string[];
+  widgetNoticeMaxChars: number;
 }
 
 export type LogLevel = "error" | "warn" | "info" | "debug";
@@ -105,31 +118,67 @@ export interface TokenUsage {
 // =============================================================================
 
 export type GRCMode = "normal" | "grc";
-export type GRCManualMode = "auto" | "forced-on" | "forced-off";
+export type RuntimeMode = "on" | "off";
 export type SubagentStatus = "idle" | "running" | "done" | "failed";
 
 export interface GRCState {
   mode: GRCMode;
-  manualMode: GRCManualMode;
-  turnCount: number;
+  runtimeMode: RuntimeMode;
+  turnCount: number; // legacy compatibility: mirrors completed agent-rounds in v1.1
+  totalAgentRounds: number;
+  currentAgentRound: number;
+  currentTurnRound: number;
   grcCycleCount: number;
   reflector: {
     status: SubagentStatus;
     lastAdvice: string | null;
-    processedUpToTurn: number;
+    processedUpToTurn: number; // legacy compatibility
+    processedUpToAgentRound: number;
+    lastReflectedAgentRound: number;
   };
   curator: {
     status: SubagentStatus;
     lastSummary: string | null;
-    processedUpToTurn: number;
+    lastSummaryEntry: SummaryEntry | null;
+    lastGoalState: GoalStateDocument | null;
+    lastSignal: GoalStateSignal | null;
+    summaryCache: SummaryEntry[];
+    processedUpToTurn: number; // legacy compatibility
+    processedUpToAgentRound: number;
+    lastCuratedAgentRound: number;
     principlesExtracted: number;
   };
   activatedAtTurn: number | null;
   lastGrcTriggerTurn: number;
 }
 
+export interface ReflectorGoalContext {
+  currentFocusGoalId: string | null;
+  focusPath: Array<{
+    id: string;
+    assertion: string;
+    status: "active" | "suspended" | "completed";
+  }>;
+  siblingActiveGoals: Array<{
+    id: string;
+    assertion: string;
+  }>;
+  recentMigrations: Array<{
+    fromGoalId: string | null;
+    toGoalId: string;
+    reason: string;
+  }>;
+}
+
+export interface ReflectorInput {
+  currentRoundConversation: string;
+  currentGoalState: GoalStateDocument | null;
+  goalContext?: ReflectorGoalContext | null;
+}
+
 export interface ReflectorResult {
   advice: string;
+  principleOps: PrincipleOp[];
   hasSubstantiveContent: boolean;
   sections: {
     direction: string;
@@ -144,9 +193,92 @@ export interface PrincipleDraft {
   tags: string[];
 }
 
+export type PrincipleOp =
+  | {
+      op: "create";
+      content: string;
+      tags: string[];
+    }
+  | {
+      op: "reuse";
+      targetId: string;
+    }
+  | {
+      op: "merge";
+      targetId: string;
+      content: string;
+      tags: string[];
+    }
+  | {
+      op: "conflict";
+      targetId: string;
+      content: string;
+      tags: string[];
+    };
+
+export interface SummaryEntry {
+  agentRound: number;
+  timestamp: string;
+  sessionFile?: string;
+  sessionEntryRange?: {
+    startAgentEntryIndex: number;
+    endAgentEntryIndex: number;
+  };
+  summary: {
+    goal: string;
+    completed: string[];
+    keyDecisions: string[];
+    filesChanged: Array<{
+      path: string;
+      action: "read" | "edit" | "write" | "bash";
+    }>;
+    status: string;
+    blockers: string[];
+  };
+  sessionPointers?: {
+    file?: string;
+    searchQuery?: string;
+  };
+}
+
+export interface GoalStateSignal {
+  type: "advance" | "correct" | "supplement" | "continue" | "clarify";
+  confidence: number;
+  evidence: string;
+}
+
+export interface GoalStateDocument {
+  version: 1;
+  agentRound: number;
+  updatedAt: string;
+  active: Array<{
+    id: string;
+    assertion: string;
+    status: "active" | "suspended";
+    sinceRound: number;
+    lastConfirmedRound: number;
+    signal: "explicit" | "inferred";
+  }>;
+  completed: Array<{
+    id: string;
+    assertion: string;
+    completedAtRound: number;
+  }>;
+  migrations: Array<{
+    from: string;
+    to: string;
+    atRound: number;
+    reason: string;
+  }>;
+  prunedCount: number;
+}
+
 export interface CuratorResult {
   summary: string;
-  principles: PrincipleDraft[];
+  summaryEntry: SummaryEntry | null;
+  goalState: GoalStateDocument | null;
+  signal: GoalStateSignal | null;
+  closureEvidence: string[];
   sections: {
     goal: string;
     completed: string[];
@@ -158,15 +290,46 @@ export interface CuratorResult {
   };
 }
 
+export interface CuratorArtifactEntry {
+  customType: "grc-curator-artifact";
+  agentRound: number;
+  recordedAt: string;
+  processedUpToUserTurn: number;
+  summary: string | null;
+  summaryEntry: SummaryEntry | null;
+  goalState: GoalStateDocument | null;
+  signal: GoalStateSignal | null;
+}
+
+
+export interface AgentRoundBoundaryEntry {
+  customType: "passto-round-boundary";
+  agentRound: number;
+  totalCompletedAgentRounds: number;
+  userTurnsAtStart: number;
+  createdAt: string;
+}
+
 export interface PrincipleItem {
   id: string;
   created: string;
+  updated?: string;
   tags: string[];
   content: string;
   metadata: {
     source?: string;
+    sources?: string[];
+    hintCount?: number;
+    activeScore?: number;
+    lastHintedAt?: string;
+    hintTimestamps?: string[];
+    lastDecayAt?: string;
+    mergeCount?: number;
+    conflictGroupId?: string;
+    // legacy compatibility
     hitCount?: number;
     lastUsed?: string;
+    conflictStatus?: "clean" | "needs-review";
   };
   score?: number;
 }
@@ -191,6 +354,7 @@ export interface Logger {
   warn(...args: unknown[]): void;
   info(...args: unknown[]): void;
   debug(...args: unknown[]): void;
+  flush?(): Promise<void>;
 }
 
 // =============================================================================
@@ -198,7 +362,7 @@ export interface Logger {
 // =============================================================================
 
 // These are simplified versions of the event types from pi-coding-agent
-// Actual types come from the @mariozechner/pi-coding-agent package
+// Actual types come from the @earendil-works/pi-coding-agent package
 
 export interface PiMessage {
   role: "user" | "assistant" | "toolResult" | "system";

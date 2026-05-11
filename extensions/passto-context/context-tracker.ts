@@ -3,12 +3,12 @@
  * Tracks session state: turns, tokens, files modified, tools used, etc.
  */
 
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AgentEndEvent, TurnEndEvent } from "@mariozechner/pi-coding-agent";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AgentEndEvent, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { SessionState, TrackingConfig } from "./types.js";
 import type { Logger } from "./types.js";
 
-// Pi Message types (from @mariozechner/pi-ai and @mariozechner/pi-agent-core)
+// Pi Message types (from @earendil-works/pi-ai and @earendil-works/pi-agent-core)
 interface PiMessage {
   role?: string;
   content: Array<{ type?: string; text?: string; name?: string; id?: string; arguments?: string | Record<string, unknown>; source?: unknown }>;

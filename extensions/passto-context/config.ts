@@ -9,6 +9,7 @@ import * as os from "node:os";
 import type { PasstoContextConfig, CompactionConfig, MemoryConfig, TrackingConfig, GRCConfig, LogLevel } from "./types.js";
 import { deepMerge, expandHome, getDefaultConfigDir, getDefaultMemoryDir } from "./utils.js";
 
+
 // =============================================================================
 // Default Configuration
 // =============================================================================
@@ -39,9 +40,16 @@ const DEFAULT_TRACKING: TrackingConfig = {
 
 const DEFAULT_GRC: GRCConfig = {
   enabled: true,
-  grcTurnThreshold: 6,
+  // Deprecated compatibility defaults only. v1.1 主调度已不再使用这些字段。
+  grcTurnThreshold: 5,
   grcCooldownTurns: 4,
+  midRunTurnThreshold: 15,
   curatorKeepRecentTurns: 4,
+  curatorEveryAgentRounds: 1,
+  keepRecentAgentRounds: 3,
+  maxContextPercent: 8,
+  summaryCacheSize: 8,
+  maxGoalStateActive: 8,
   subagentModel: "gemini-3-flash",
   subagentModelProvider: "opencode",
   maxReflectorTokens: 1500,
@@ -49,8 +57,11 @@ const DEFAULT_GRC: GRCConfig = {
   principlesDir: "~/.passtocontext/memory/principles",
   maxPrinciplesInjection: 5,
   maxPrinciples: 100,
+  orchestratorToolPrefixes: ["passto_planner_", "passto_executor_", "passto_builder_"],
+  widgetNoticeMaxChars: 24,
 };
 
+const DEFAULT_LOG_ENABLED = true;
 const DEFAULT_LOG_LEVEL: LogLevel = "info";
 
 function getFullDefaults(): PasstoContextConfig {
@@ -59,6 +70,7 @@ function getFullDefaults(): PasstoContextConfig {
     memory: { ...DEFAULT_MEMORY },
     tracking: { ...DEFAULT_TRACKING },
     grc: { ...DEFAULT_GRC },
+    logEnabled: DEFAULT_LOG_ENABLED,
     logLevel: DEFAULT_LOG_LEVEL,
   };
 }
@@ -191,14 +203,22 @@ export function validateConfig(config: PasstoContextConfig): string[] {
   }
 
   // GRC validation
-  if (config.grc.grcTurnThreshold < 1) {
-    errors.push("grc.grcTurnThreshold must be >= 1");
+  // Deprecated legacy fields are accepted leniently for backward compatibility:
+  // grcTurnThreshold / grcCooldownTurns / curatorKeepRecentTurns / curatorEveryAgentRounds
+  if (config.grc.midRunTurnThreshold < 1) {
+    errors.push("grc.midRunTurnThreshold must be >= 1");
   }
-  if (config.grc.grcCooldownTurns < 0) {
-    errors.push("grc.grcCooldownTurns must be >= 0");
+  if (config.grc.keepRecentAgentRounds < 1) {
+    errors.push("grc.keepRecentAgentRounds must be >= 1");
   }
-  if (config.grc.curatorKeepRecentTurns < 0) {
-    errors.push("grc.curatorKeepRecentTurns must be >= 0");
+  if (config.grc.maxContextPercent <= 0 || config.grc.maxContextPercent > 100) {
+    errors.push("grc.maxContextPercent must be > 0 and <= 100");
+  }
+  if (config.grc.summaryCacheSize < 1) {
+    errors.push("grc.summaryCacheSize must be >= 1");
+  }
+  if (config.grc.maxGoalStateActive < 1) {
+    errors.push("grc.maxGoalStateActive must be >= 1");
   }
   if (config.grc.maxReflectorTokens < 100) {
     errors.push("grc.maxReflectorTokens must be >= 100");
@@ -212,6 +232,12 @@ export function validateConfig(config: PasstoContextConfig): string[] {
   if (config.grc.maxPrinciples < 1) {
     errors.push("grc.maxPrinciples must be >= 1");
   }
+  if (!Array.isArray(config.grc.orchestratorToolPrefixes)) {
+    errors.push("grc.orchestratorToolPrefixes must be an array");
+  }
+  if (config.grc.widgetNoticeMaxChars < 8) {
+    errors.push("grc.widgetNoticeMaxChars must be >= 8");
+  }
   if (!config.grc.subagentModel) {
     errors.push("grc.subagentModel is required");
   }
@@ -219,7 +245,10 @@ export function validateConfig(config: PasstoContextConfig): string[] {
     errors.push("grc.subagentModelProvider is required");
   }
 
-  // Log level validation
+  // Log validation
+  if (typeof config.logEnabled !== "boolean") {
+    errors.push("logEnabled must be a boolean");
+  }
   if (!["error", "warn", "info", "debug"].includes(config.logLevel)) {
     errors.push("logLevel must be one of: error, warn, info, debug");
   }

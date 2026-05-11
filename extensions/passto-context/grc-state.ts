@@ -1,25 +1,39 @@
 /**
- * PasstoContext GRC State Machine
- * Minimal state management for Generator-Reflector-Curator lifecycle
+ * PasstoContext runtime state machine
+ * Minimal state management for the Generator-Reflector-Curator lifecycle.
+ *
+ * The current top-level operator control surface is `runtimeMode = on | off`.
+ * Legacy `manualMode` values are only read during restore and mapped into `runtimeMode`.
  */
 
-import type { GRCConfig, GRCState, GRCManualMode, SubagentStatus } from "./types.js";
+import type { GRCState, GoalStateDocument, GoalStateSignal, RuntimeMode, SubagentStatus, SummaryEntry } from "./types.js";
 
 export function createInitialGRCState(): GRCState {
   return {
     mode: "normal",
-    manualMode: "auto",
+    runtimeMode: "on",
     turnCount: 0,
+    totalAgentRounds: 0,
+    currentAgentRound: 0,
+    currentTurnRound: 0,
     grcCycleCount: 0,
     reflector: {
       status: "idle",
       lastAdvice: null,
       processedUpToTurn: 0,
+      processedUpToAgentRound: 0,
+      lastReflectedAgentRound: 0,
     },
     curator: {
       status: "idle",
       lastSummary: null,
+      lastSummaryEntry: null,
+      lastGoalState: null,
+      lastSignal: null,
+      summaryCache: [],
       processedUpToTurn: 0,
+      processedUpToAgentRound: 0,
+      lastCuratedAgentRound: 0,
       principlesExtracted: 0,
     },
     activatedAtTurn: null,
@@ -27,19 +41,29 @@ export function createInitialGRCState(): GRCState {
   };
 }
 
-export function incrementTurn(state: GRCState): GRCState {
+export function startAgentRound(state: GRCState): GRCState {
   return {
     ...state,
-    turnCount: state.turnCount + 1,
+    currentAgentRound: state.totalAgentRounds + 1,
+    currentTurnRound: 0,
   };
 }
 
-export function shouldTriggerGRC(state: GRCState, config: GRCConfig): boolean {
-  if (state.manualMode === "forced-off") return false;
-  if (state.manualMode === "forced-on") return state.mode !== "grc";
-  if (!config.enabled) return false;
-  if (state.mode === "grc") return false;
-  return state.turnCount >= config.grcTurnThreshold;
+export function incrementTurnRound(state: GRCState): GRCState {
+  return {
+    ...state,
+    currentTurnRound: state.currentTurnRound + 1,
+  };
+}
+
+export function finishAgentRound(state: GRCState): GRCState {
+  const totalAgentRounds = state.totalAgentRounds + 1;
+  return {
+    ...state,
+    turnCount: totalAgentRounds,
+    totalAgentRounds,
+    currentTurnRound: 0,
+  };
 }
 
 export function transitionToGRC(state: GRCState, currentTurn: number): GRCState {
@@ -65,6 +89,8 @@ export function updateReflectorStatus(
   status: SubagentStatus,
   advice?: string | null,
   processedUpToTurn?: number,
+  processedUpToAgentRound?: number,
+  lastReflectedAgentRound?: number,
 ): GRCState {
   return {
     ...state,
@@ -72,6 +98,8 @@ export function updateReflectorStatus(
       status,
       lastAdvice: advice !== undefined ? advice : state.reflector.lastAdvice,
       processedUpToTurn: processedUpToTurn ?? state.reflector.processedUpToTurn,
+      processedUpToAgentRound: processedUpToAgentRound ?? state.reflector.processedUpToAgentRound,
+      lastReflectedAgentRound: lastReflectedAgentRound ?? state.reflector.lastReflectedAgentRound,
     },
   };
 }
@@ -82,39 +110,50 @@ export function updateCuratorStatus(
   summary?: string | null,
   processedUpToTurn?: number,
   principlesExtracted?: number,
+  summaryEntry?: SummaryEntry | null,
+  goalState?: GoalStateDocument | null,
+  summaryCache?: SummaryEntry[],
+  signal?: GoalStateSignal | null,
+  processedUpToAgentRound?: number,
+  lastCuratedAgentRound?: number,
 ): GRCState {
   return {
     ...state,
     curator: {
       status,
       lastSummary: summary !== undefined ? summary : state.curator.lastSummary,
+      lastSummaryEntry: summaryEntry !== undefined ? summaryEntry : state.curator.lastSummaryEntry,
+      lastGoalState: goalState !== undefined ? goalState : state.curator.lastGoalState,
+      lastSignal: signal !== undefined ? signal : state.curator.lastSignal,
+      summaryCache: summaryCache ?? state.curator.summaryCache,
       processedUpToTurn: processedUpToTurn ?? state.curator.processedUpToTurn,
+      processedUpToAgentRound: processedUpToAgentRound ?? state.curator.processedUpToAgentRound,
+      lastCuratedAgentRound: lastCuratedAgentRound ?? state.curator.lastCuratedAgentRound,
       principlesExtracted: principlesExtracted ?? state.curator.principlesExtracted,
     },
   };
 }
 
-export function shouldTriggerNextCycle(state: GRCState, config: GRCConfig): boolean {
-  if (state.manualMode === "forced-off") return false;
-  if (state.manualMode !== "forced-on" && !config.enabled) return false;
-  if (state.mode !== "grc") return false;
-  if (state.reflector.status === "running" || state.curator.status === "running") return false;
-  return state.turnCount - state.lastGrcTriggerTurn >= config.grcCooldownTurns;
-}
-
-export function markGRCTriggered(state: GRCState, currentTurn: number): GRCState {
+export function pushSummaryCacheEntry(
+  state: GRCState,
+  entry: SummaryEntry,
+  maxSize: number,
+): { state: GRCState; evicted: SummaryEntry | null } {
+  const deduped = state.curator.summaryCache.filter((item) => item.agentRound !== entry.agentRound);
+  const combined = [...deduped, entry];
+  const safeMax = Math.max(1, maxSize);
+  const evictedCount = Math.max(0, combined.length - safeMax);
+  const evicted = evictedCount > 0 ? combined[0] ?? null : null;
+  const next = combined.slice(-safeMax);
   return {
-    ...state,
-    grcCycleCount: state.grcCycleCount + 1,
-    lastGrcTriggerTurn: currentTurn,
-    reflector: {
-      ...state.reflector,
-      status: "idle",
+    state: {
+      ...state,
+      curator: {
+        ...state.curator,
+        summaryCache: next,
+      },
     },
-    curator: {
-      ...state.curator,
-      status: "idle",
-    },
+    evicted,
   };
 }
 
@@ -132,27 +171,19 @@ export function clearRunningSubagentStatuses(state: GRCState): GRCState {
   };
 }
 
-export function setGRCManualMode(state: GRCState, manualMode: GRCManualMode): GRCState {
-  if (manualMode === "forced-off") {
+export function setRuntimeMode(state: GRCState, runtimeMode: RuntimeMode): GRCState {
+  if (runtimeMode === "off") {
     return {
       ...clearRunningSubagentStatuses(state),
-      manualMode,
+      runtimeMode,
       mode: "normal",
     };
   }
 
   return {
     ...state,
-    manualMode,
+    runtimeMode,
   };
-}
-
-export function forceActivateGRC(state: GRCState): GRCState {
-  const withManualMode = setGRCManualMode(state, "forced-on");
-  if (withManualMode.mode === "grc") {
-    return withManualMode;
-  }
-  return transitionToGRC(withManualMode, withManualMode.turnCount);
 }
 
 export function serializeGRCState(state: GRCState): GRCState {
@@ -163,11 +194,23 @@ export function restoreGRCState(data: unknown): GRCState {
   const initial = createInitialGRCState();
   if (!data || typeof data !== "object") return initial;
 
-  const obj = data as Partial<GRCState>;
+  const obj = data as Partial<GRCState> & { manualMode?: unknown };
+  const runtimeMode = isRuntimeMode(obj.runtimeMode)
+    ? obj.runtimeMode
+    : mapLegacyManualModeToRuntimeMode(obj.manualMode);
+
   return clearRunningSubagentStatuses({
     mode: obj.mode === "grc" ? "grc" : "normal",
-    manualMode: isManualMode(obj.manualMode) ? obj.manualMode : initial.manualMode,
+    runtimeMode,
     turnCount: typeof obj.turnCount === "number" ? obj.turnCount : initial.turnCount,
+    totalAgentRounds:
+      typeof obj.totalAgentRounds === "number"
+        ? obj.totalAgentRounds
+        : (typeof obj.turnCount === "number" ? obj.turnCount : initial.totalAgentRounds),
+    currentAgentRound:
+      typeof obj.currentAgentRound === "number" ? obj.currentAgentRound : initial.currentAgentRound,
+    currentTurnRound:
+      typeof obj.currentTurnRound === "number" ? obj.currentTurnRound : initial.currentTurnRound,
     grcCycleCount: typeof obj.grcCycleCount === "number" ? obj.grcCycleCount : initial.grcCycleCount,
     reflector: {
       status: isSubagentStatus(obj.reflector?.status) ? obj.reflector!.status : initial.reflector.status,
@@ -178,16 +221,48 @@ export function restoreGRCState(data: unknown): GRCState {
         typeof obj.reflector?.processedUpToTurn === "number"
           ? obj.reflector.processedUpToTurn
           : initial.reflector.processedUpToTurn,
+      processedUpToAgentRound:
+        typeof obj.reflector?.processedUpToAgentRound === "number"
+          ? obj.reflector.processedUpToAgentRound
+          : initial.reflector.processedUpToAgentRound,
+      lastReflectedAgentRound:
+        typeof obj.reflector?.lastReflectedAgentRound === "number"
+          ? obj.reflector.lastReflectedAgentRound
+          : initial.reflector.lastReflectedAgentRound,
     },
     curator: {
       status: isSubagentStatus(obj.curator?.status) ? obj.curator!.status : initial.curator.status,
       lastSummary: typeof obj.curator?.lastSummary === "string" || obj.curator?.lastSummary === null
         ? (obj.curator?.lastSummary ?? null)
         : initial.curator.lastSummary,
+      lastSummaryEntry:
+        obj.curator?.lastSummaryEntry && typeof obj.curator.lastSummaryEntry === "object"
+          ? obj.curator.lastSummaryEntry as SummaryEntry
+          : initial.curator.lastSummaryEntry,
+      lastGoalState:
+        obj.curator?.lastGoalState && typeof obj.curator.lastGoalState === "object"
+          ? obj.curator.lastGoalState as GoalStateDocument
+          : initial.curator.lastGoalState,
+      lastSignal:
+        obj.curator?.lastSignal && typeof obj.curator.lastSignal === "object"
+          ? obj.curator.lastSignal as GoalStateSignal
+          : initial.curator.lastSignal,
+      summaryCache:
+        Array.isArray(obj.curator?.summaryCache)
+          ? obj.curator.summaryCache.filter((item): item is SummaryEntry => !!item && typeof item === "object")
+          : initial.curator.summaryCache,
       processedUpToTurn:
         typeof obj.curator?.processedUpToTurn === "number"
           ? obj.curator.processedUpToTurn
           : initial.curator.processedUpToTurn,
+      processedUpToAgentRound:
+        typeof obj.curator?.processedUpToAgentRound === "number"
+          ? obj.curator.processedUpToAgentRound
+          : initial.curator.processedUpToAgentRound,
+      lastCuratedAgentRound:
+        typeof obj.curator?.lastCuratedAgentRound === "number"
+          ? obj.curator.lastCuratedAgentRound
+          : initial.curator.lastCuratedAgentRound,
       principlesExtracted:
         typeof obj.curator?.principlesExtracted === "number"
           ? obj.curator.principlesExtracted
@@ -206,6 +281,12 @@ function isSubagentStatus(value: unknown): value is SubagentStatus {
   return value === "idle" || value === "running" || value === "done" || value === "failed";
 }
 
-function isManualMode(value: unknown): value is GRCManualMode {
-  return value === "auto" || value === "forced-on" || value === "forced-off";
+function isRuntimeMode(value: unknown): value is RuntimeMode {
+  return value === "on" || value === "off";
+}
+
+function mapLegacyManualModeToRuntimeMode(value: unknown): RuntimeMode {
+  if (value === "forced-off") return "off";
+  if (value === "auto" || value === "forced-on") return "on";
+  return "on";
 }

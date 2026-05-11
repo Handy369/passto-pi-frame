@@ -1,15 +1,26 @@
 /**
- * PasstoContext GRC Subagent Engine
+ * PasstoContext runtime subagent engine
  * Conversation serialization + Reflector / Curator execution helpers
  */
 
-import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { complete } from "@mariozechner/pi-ai";
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   buildCuratorSubagentPrompt,
   buildReflectorSubagentPrompt,
 } from "./grc-prompts.js";
-import type { CuratorResult, GRCConfig, Logger, PrincipleDraft, ReflectorResult } from "./types.js";
+import { parseCuratorOutput } from "./grc-curator-parser.ts";
+import { normalizeCuratorResultAgentRound } from "./grc-curator-normalizer.ts";
+import type {
+  CuratorResult,
+  GRCConfig,
+  GoalStateDocument,
+  Logger,
+  PrincipleDraft,
+  PrincipleItem,
+  PrincipleOp,
+  ReflectorGoalContext,
+  ReflectorResult,
+} from "./types.js";
 import { estimateTokens } from "./utils.js";
 
 interface SerializeConversationOptions {
@@ -117,28 +128,39 @@ export function serializeConversation(branch: Array<{ message?: unknown }>, opti
 
 export async function executeReflector(
   conversation: string,
+  currentGoalState: GoalStateDocument | null,
+  goalContext: ReflectorGoalContext | null,
   ctx: ExtensionContext,
   config: GRCConfig,
   logger: Logger,
   signal?: AbortSignal,
 ): Promise<ReflectorResult | null> {
-  const prompt = buildReflectorSubagentPrompt(conversation);
+  const prompt = buildReflectorSubagentPrompt(conversation, currentGoalState, goalContext);
   const raw = await executeTextCompletion(prompt, ctx, config, logger, config.maxReflectorTokens, signal);
   if (!raw) return null;
   return parseReflectorOutput(raw);
 }
 
 export async function executeCurator(
-  conversation: string,
+  previousRoundConversation: string,
+  currentUserMessage: string,
   ctx: ExtensionContext,
   config: GRCConfig,
   logger: Logger,
   signal?: AbortSignal,
+  currentGoalState: GoalStateDocument | null = null,
+  currentAgentRound = 0,
 ): Promise<CuratorResult | null> {
-  const prompt = buildCuratorSubagentPrompt(conversation);
+  const prompt = buildCuratorSubagentPrompt(
+    previousRoundConversation,
+    currentUserMessage,
+    currentGoalState ? JSON.stringify(currentGoalState, null, 2) : "null",
+    currentAgentRound,
+  );
   const raw = await executeTextCompletion(prompt, ctx, config, logger, config.maxCuratorSummaryTokens, signal);
   if (!raw) return null;
-  return parseCuratorOutput(raw);
+  const parsed = parseCuratorOutput(raw);
+  return normalizeCuratorResultAgentRound(parsed, currentAgentRound);
 }
 
 export function parseReflectorOutput(raw: string): ReflectorResult | null {
@@ -162,34 +184,14 @@ export function parseReflectorOutput(raw: string): ReflectorResult | null {
     substantiveBlindSpots.length > 0;
 
   return {
-    advice: text,
+    advice: stripTrailingPrincipleOpsBlock(text).trim(),
+    principleOps: extractPrincipleOps(text),
     hasSubstantiveContent,
     sections: {
       direction,
       blindSpots,
       risks,
       suggestions,
-    },
-  };
-}
-
-export function parseCuratorOutput(raw: string): CuratorResult | null {
-  const text = raw.trim();
-  if (!text.includes("## 目标") || !text.includes("## 已完成")) {
-    return null;
-  }
-
-  return {
-    summary: text,
-    principles: extractPrinciples(text),
-    sections: {
-      goal: extractSection(text, "目标"),
-      completed: extractListSection(text, "已完成"),
-      decisions: extractListSection(text, "关键决策"),
-      files: extractListSection(text, "修改的文件"),
-      status: extractSection(text, "当前状态"),
-      nextSteps: extractListSection(text, "下一步"),
-      warnings: extractListSection(text, "注意事项"),
     },
   };
 }
@@ -202,6 +204,7 @@ async function executeTextCompletion(
   maxTokens: number,
   signal?: AbortSignal,
 ): Promise<string> {
+  const { complete } = await import("@earendil-works/pi-ai");
   const availableModels = ctx.modelRegistry.getAvailable();
   let model = ctx.modelRegistry.find(config.subagentModelProvider, config.subagentModel);
 
@@ -319,46 +322,67 @@ function extractListSection(text: string, title: string): string[] {
     .filter(Boolean);
 }
 
-function extractPrinciples(text: string): PrincipleDraft[] {
-  const matches = text.match(/<!--\s*PRINCIPLE:\s*([\s\S]*?)\s*-->/g) ?? [];
-
-  return matches
-    .map((match) => match.replace(/<!--\s*PRINCIPLE:\s*/, "").replace(/\s*-->/, "").trim())
-    .map((raw) => parsePrincipleDraft(raw))
-    .filter((item): item is PrincipleDraft => !!item)
-    .slice(0, 3);
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function parsePrincipleDraft(raw: string): PrincipleDraft | null {
-  if (!raw) return null;
+function extractPrincipleOps(text: string): PrincipleOp[] {
+  const match = text.match(/```json\s*([\s\S]*?)```\s*$/);
+  if (!match) return [];
 
   try {
-    const parsed = JSON.parse(raw) as { content?: unknown; tags?: unknown };
-    if (typeof parsed.content !== "string" || !parsed.content.trim()) {
-      return null;
-    }
-
-    const tags = Array.isArray(parsed.tags)
-      ? parsed.tags.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean)
-      : [];
-
-    return {
-      content: parsed.content.trim(),
-      tags: Array.from(new Set(tags)).slice(0, 4),
-    };
+    const parsed = JSON.parse(match[1].trim()) as { principleOps?: unknown };
+    if (!Array.isArray(parsed.principleOps)) return [];
+    return parsed.principleOps.map(parsePrincipleOp).filter((item): item is PrincipleOp => !!item).slice(0, 3);
   } catch {
-    return {
-      content: raw.trim(),
-      tags: [],
-    };
+    return [];
   }
+}
+
+function parsePrincipleOp(raw: unknown): PrincipleOp | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const op = typeof value.op === "string" ? value.op : "";
+  const targetId = typeof value.targetId === "string" ? value.targetId.trim() : "";
+  const draft = parsePrincipleDraft(value);
+
+  if (op === "reuse" && targetId) {
+    return { op, targetId };
+  }
+  if (op === "create" && draft) {
+    return { op, content: draft.content, tags: draft.tags };
+  }
+  if (op === "merge" && targetId && draft) {
+    return { op, targetId, content: draft.content, tags: draft.tags };
+  }
+  if (op === "conflict" && targetId && draft) {
+    return { op, targetId, content: draft.content, tags: draft.tags };
+  }
+  return null;
+}
+
+function parsePrincipleDraft(raw: unknown): PrincipleDraft | null {
+  if (!raw || typeof raw !== "object") return null;
+  const parsed = raw as { content?: unknown; tags?: unknown };
+  if (typeof parsed.content !== "string" || !parsed.content.trim()) {
+    return null;
+  }
+
+  const tags = Array.isArray(parsed.tags)
+    ? parsed.tags.filter((tag): tag is string => typeof tag === "string").map((tag) => tag.trim()).filter(Boolean)
+    : [];
+
+  return {
+    content: parsed.content.trim(),
+    tags: Array.from(new Set(tags)).slice(0, 4),
+  };
+}
+
+function stripTrailingPrincipleOpsBlock(text: string): string {
+  return text.replace(/\n?```json\s*[\s\S]*?```\s*$/, "").trim();
 }
 
 function isExplicitEmptyReflectorItem(text: string): boolean {
   const normalized = text.replace(/[。.!！\s]/g, "").toLowerCase();
   return normalized === "无" || normalized === "未发现明显盲点" || normalized === "none";
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
