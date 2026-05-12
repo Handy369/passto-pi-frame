@@ -101,8 +101,6 @@ cat > "$CONFIG_PATH" <<'JSON'
   "tracking": { "enabled": true, "showWidget": true },
   "grc": {
     "enabled": true,
-    "grcTurnThreshold": 99,
-    "grcCooldownTurns": 99,
     "midRunTurnThreshold": 2,
     "subagentModel": "gemini-3-flash",
     "subagentModelProvider": "opencode"

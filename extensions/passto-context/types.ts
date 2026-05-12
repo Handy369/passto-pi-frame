@@ -42,15 +42,7 @@ export interface TrackingConfig {
 
 export interface GRCConfig {
   enabled: boolean;
-  /** @deprecated v1.1 以后退出主调度 */
-  grcTurnThreshold: number;
-  /** @deprecated v1.1 以后退出主调度 */
-  grcCooldownTurns: number;
   midRunTurnThreshold: number;
-  /** @deprecated v1.1 以后退出主调度 */
-  curatorKeepRecentTurns: number;
-  /** @deprecated v1.1 以后退出主调度 */
-  curatorEveryAgentRounds: number;
   keepRecentAgentRounds: number;
   maxContextPercent: number;
   summaryCacheSize: number;

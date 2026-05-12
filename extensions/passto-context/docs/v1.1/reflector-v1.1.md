@@ -1,5 +1,8 @@
 # PasstoContext v1.1 Reflector 设计文档
 
+> ⚠️ 归档提示：本文已被 `docs/v1.1/V1_1_FINAL_ARCHITECTURE.md` 的最终实现口径取代；当前实现请**优先参考**该文档。
+> ⚠️ 命名映射：本文若出现 `/pta`、`manualMode`、`forced-on / forced-off` 等旧术语，应按当前实现理解为 `/ptc` 与 `runtimeMode` 的历史前身。
+>
 > 状态：design-draft
 > 目标：为 Reflector 建立与 Curator v1.1 同等级别的设计哲学、输入输出契约、迁移边界与防漂移约束。
 > 参考：

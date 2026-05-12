@@ -1,5 +1,8 @@
 # PasstoContext Reflector v1.1 实现计划
 
+> ⚠️ 归档提示：本文已被 `docs/v1.1/V1_1_FINAL_ARCHITECTURE.md` 的最终实现口径取代；当前实现请**优先参考**该文档。
+> ⚠️ 命名映射：本文若出现 `/pta`、`manualMode`、`forced-on / forced-off` 等旧术语，应按当前实现理解为 `/ptc` 与 `runtimeMode` 的历史前身。
+>
 > 状态：implementation-plan-draft
 > 作用：把 `reflector-v1.1.md` 收敛为可执行的工程计划，避免后续实现时在 prompt、types、parser、state、tests 多线同时漂移。
 > 设计依据：

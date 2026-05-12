@@ -1,5 +1,6 @@
 # PasstoContext 运行时架构集成设计方案
 
+> ⚠️ 归档提示：本文为历史设计文档，当前实现口径已由 `docs/v1.1/V1_1_FINAL_ARCHITECTURE.md` 取代；阅读实现请**优先参考**最终架构文档。
 > ⚠️ 命名映射：本文包含较多历史术语。阅读当前实现时，请将 `/pta` 视为 `/ptc`，将 `manualMode / forced-on / forced-off` 视为已迁移到顶层 `runtimeMode` 的旧兼容概念。
 >
 > 版本: v1.2（已按 2026-05-09 代码现状同步） | 日期: 2026-05-09

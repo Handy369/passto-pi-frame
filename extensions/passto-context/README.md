@@ -200,11 +200,7 @@ PasstoContext 使用 JSON 配置文件：
   },
   "grc": {
     "enabled": true,
-    "grcTurnThreshold": 5,
-    "grcCooldownTurns": 4,
     "midRunTurnThreshold": 15,
-    "curatorKeepRecentTurns": 4,
-    "curatorEveryAgentRounds": 1,
     "keepRecentAgentRounds": 3,
     "maxContextPercent": 8,
     "summaryCacheSize": 8,
@@ -224,7 +220,7 @@ PasstoContext 使用 JSON 配置文件：
 }
 ```
 
-> 注：`grcTurnThreshold / grcCooldownTurns / curatorKeepRecentTurns / curatorEveryAgentRounds` 为 **deprecated 兼容字段**，示例中保留仅用于旧配置平滑迁移。
+> 注：旧配置中的 `grcTurnThreshold / grcCooldownTurns / curatorKeepRecentTurns / curatorEveryAgentRounds` 仍可被宽松读取，但已不再属于当前公开配置面。
 
 ### 配置项说明
 
@@ -242,11 +238,7 @@ PasstoContext 使用 JSON 配置文件：
 | `tracking.enabled` | `true` | 启用会话状态追踪 |
 | `tracking.showWidget` | `true` | 在编辑器 Widget 区域显示状态 |
 | `grc.enabled` | `true` | 启用 GRC 认知循环 |
-| `grc.grcTurnThreshold` | `5` | [deprecated] 仅为旧状态恢复保留，v1.1 主路径不再使用 |
-| `grc.grcCooldownTurns` | `4` | [deprecated] 仅为旧状态恢复保留，v1.1 主路径不再使用 |
 | `grc.midRunTurnThreshold` | `15` | 单次 `agent_start -> agent_end` 内，`turn-round` 达到该阈值仍未结束时，触发一次运行中 Reflector |
-| `grc.curatorKeepRecentTurns` | `4` | [deprecated] 仅为旧配置兼容保留，当前主路径不再依赖 |
-| `grc.curatorEveryAgentRounds` | `1` | [deprecated] Curator 已改为 `before_agent_start` 每轮处理上一轮，主路径不再依赖 |
 | `grc.keepRecentAgentRounds` | `3` | `context` 主路径中至少保留的最近 agent-round 原始消息轮数 |
 | `grc.maxContextPercent` | `8` | `context` 主路径的滑窗触发阈值，占当前模型 `contextWindow` 的百分比 |
 | `grc.summaryCacheSize` | `8` | `SummaryCache` 的 FIFO 容量 |

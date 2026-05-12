@@ -40,12 +40,7 @@ const DEFAULT_TRACKING: TrackingConfig = {
 
 const DEFAULT_GRC: GRCConfig = {
   enabled: true,
-  // Deprecated compatibility defaults only. v1.1 主调度已不再使用这些字段。
-  grcTurnThreshold: 5,
-  grcCooldownTurns: 4,
   midRunTurnThreshold: 15,
-  curatorKeepRecentTurns: 4,
-  curatorEveryAgentRounds: 1,
   keepRecentAgentRounds: 3,
   maxContextPercent: 8,
   summaryCacheSize: 8,
@@ -203,8 +198,6 @@ export function validateConfig(config: PasstoContextConfig): string[] {
   }
 
   // GRC validation
-  // Deprecated legacy fields are accepted leniently for backward compatibility:
-  // grcTurnThreshold / grcCooldownTurns / curatorKeepRecentTurns / curatorEveryAgentRounds
   if (config.grc.midRunTurnThreshold < 1) {
     errors.push("grc.midRunTurnThreshold must be >= 1");
   }
