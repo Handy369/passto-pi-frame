@@ -33,11 +33,12 @@ import {
   updateCuratorStatus,
   updateReflectorStatus,
 } from "./grc-state.js";
-import { buildBaseGRCPrompt, buildGoalStateInjection, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
+import { buildBaseGRCPrompt, buildGoalStateInjection, buildReflectionSteerPrompt, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
 import { buildReflectorGoalContext } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
 import { formatReflectorDiagnosisLabel } from "./grc-reflector-diagnosis.ts";
 import { buildReflectorInput } from "./grc-reflector-input.ts";
+import { getSessionStateGuardReason, isSessionStateReady, normalizeSessionFile } from "./grc-session-guard.ts";
 import { createPrinciplesManager, formatPrinciplesForInjection } from "./grc-principles.js";
 import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
@@ -67,6 +68,8 @@ let tracker: ReturnType<typeof createContextTracker> | null = null;
 let grcState: GRCState | null = null;
 let principles: ReturnType<typeof createPrinciplesManager> | null = null;
 let sessionDisplayName = "unknown";
+let activeSessionFile: string | null = null;
+let sessionRestoreReady = false;
 let reflectorPromise: Promise<void> | null = null;
 let curatorPromise: Promise<void> | null = null;
 let sessionActive = false;
@@ -374,6 +377,8 @@ function resetModuleState(): void {
   grcState = null;
   principles = null;
   sessionDisplayName = "unknown";
+  activeSessionFile = null;
+  sessionRestoreReady = false;
   reflectorPromise = null;
   curatorPromise = null;
   widgetRefreshCtx = null;
@@ -401,6 +406,18 @@ async function safeNotify(ctx: Pick<ExtensionContext, "hasUI" | "ui">, message: 
   } catch {
     // Ignore UI teardown races during shutdown/reload.
   }
+}
+
+function getCurrentSessionFile(ctx: Pick<ExtensionContext, "sessionManager">): string | null {
+  return normalizeSessionFile(ctx.sessionManager.getSessionFile());
+}
+
+function getSessionScopeGuardReason(ctx: Pick<ExtensionContext, "sessionManager">): string | null {
+  return getSessionStateGuardReason(activeSessionFile, getCurrentSessionFile(ctx), sessionRestoreReady);
+}
+
+function isCurrentSessionStateReady(ctx: Pick<ExtensionContext, "sessionManager">): boolean {
+  return isSessionStateReady(activeSessionFile, getCurrentSessionFile(ctx), sessionRestoreReady);
 }
 
 async function waitForBackgroundJobs(timeoutMs: number, logger: ReturnType<typeof createLogger> | null): Promise<void> {
@@ -526,6 +543,10 @@ export default function (pi: ExtensionAPI) {
       logger?.debug("Skipped mid-run Reflector: extension state not ready");
       return;
     }
+    if (!isCurrentSessionStateReady(ctx)) {
+      logger?.debug(`Skipped mid-run Reflector: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"}`);
+      return;
+    }
     if (!isRuntimeEnabled()) {
       logger?.debug("Skipped mid-run Reflector: runtimeMode=off");
       return;
@@ -538,8 +559,8 @@ export default function (pi: ExtensionAPI) {
       logger?.debug(`Skipped mid-run Reflector due to orchestrator guard: ${orchestrationReason || "unknown"}`);
       return;
     }
-    if (reflectorPromise) {
-      logger?.debug("Skipped mid-run Reflector: Reflector already running");
+    if (currentRun.stuckReflectorDelivered) {
+      logger?.debug("Skipped mid-run Reflector: steer already delivered");
       return;
     }
 
@@ -547,32 +568,10 @@ export default function (pi: ExtensionAPI) {
     const agentRoundAtStart = grcState.currentAgentRound;
     const runTurnAtStart = currentRun.turnCount;
     const userTurnAtStart = getCurrentUserTurnCount();
-    const conversation = serializeConversation(ctx.sessionManager.getBranch(), {
-      maxTokens: 16000,
-      preserveFirstUserMessage: true,
-      preserveRecentTurns: Math.max(1, config.grc.keepRecentAgentRounds),
-      includeToolResults: true,
-      toolResultMaxChars: 1000,
-    });
-    const reflectorGoalState = grcState.curator.lastGoalState;
-    const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
-    const reflectorInput = buildReflectorInput({
-      currentRoundConversation: conversation,
-      currentGoalState: reflectorGoalState,
-      goalContext: reflectorGoalContext,
-      summaryCache: grcState.curator.summaryCache,
-      branchEntries: ctx.sessionManager.getBranch().map((entry) => entry.message as { type?: string; customType?: string; data?: unknown }),
-      principlesManager: principles,
-      principleQuery: conversation,
-    });
-
-    if (!conversation.trim()) {
-      logger?.warn("Skipped mid-run Reflector: empty serialized conversation");
-      return;
-    }
+    const advice = buildReflectionSteerPrompt();
 
     logger?.debug(
-      `Mid-run stuck detected (runTurn=${runTurnAtStart}, threshold=${config.grc.midRunTurnThreshold}, agentRound=${agentRoundAtStart}, turnRound=${grcState.currentTurnRound}, userTurns=${userTurnAtStart}) -> starting Reflector`,
+      `Mid-run stuck detected (runTurn=${runTurnAtStart}, threshold=${config.grc.midRunTurnThreshold}, agentRound=${agentRoundAtStart}, turnRound=${grcState.currentTurnRound}, userTurns=${userTurnAtStart}) -> delivering lightweight steer`,
     );
     appendMidRunDebugEntry(pi, {
       phase: "triggered",
@@ -586,167 +585,59 @@ export default function (pi: ExtensionAPI) {
       stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
     });
 
-    reflectorStartedAt = Date.now();
-    grcState = updateReflectorStatus(grcState, "running");
-    refreshWidget(ctx);
-
-    reflectorPromise = executeReflector(reflectorInput, ctx, config.grc, logger)
-      .then((result) => {
-        if (!grcState || !sessionActive || generation !== sessionGeneration || !isRuntimeEnabled()) return;
-        const processedUserTurns = Math.max(grcState.reflector.processedUpToTurn, userTurnAtStart);
-        const processedAgentRound = Math.max(grcState.reflector.processedUpToAgentRound, agentRoundAtStart);
-        if (!result || !result.hasSubstantiveContent) {
-          grcState = updateReflectorStatus(
-            grcState,
-            "done",
-            null,
-            processedUserTurns,
-            processedAgentRound,
-            agentRoundAtStart,
-            result?.diagnosis ?? null,
-          );
-          if (result) {
-            appendReflectorArtifactEntry(pi, {
-              customType: "grc-reflector-artifact",
-              agentRound: agentRoundAtStart,
-              recordedAt: new Date().toISOString(),
-              diagnosis: result.diagnosis ?? null,
-              advice: null,
-              principleOps: result.principleOps,
-              assetCandidates: result.assetCandidates ?? [],
-            });
-          }
-          reflectorStartedAt = null;
-          appendMidRunDebugEntry(pi, {
-            phase: "finished-no-advice",
-            recordedAt: new Date().toISOString(),
-            sessionGeneration: generation,
-            runTurn: runTurnAtStart,
-            threshold: getMidRunThreshold(),
-            agentRound: agentRoundAtStart,
-            userTurns: userTurnAtStart,
-            currentRunActive: currentRun.active,
-            stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
-            processedUpToUserTurn: processedUserTurns,
-          });
-          logger?.debug(
-            `Mid-run Reflector finished (no substantive advice, runTurn=${runTurnAtStart}, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result?.diagnosis) ?? "none"}, assetCandidates=${result?.assetCandidates?.length ?? 0})`,
-          );
-          refreshWidget(ctx);
-          return;
-        }
-
-        grcState = updateReflectorStatus(
-          grcState,
-          "done",
-          result.advice,
-          processedUserTurns,
-          processedAgentRound,
-          agentRoundAtStart,
-          result.diagnosis ?? null,
-        );
-        appendReflectorArtifactEntry(pi, {
-          customType: "grc-reflector-artifact",
-          agentRound: agentRoundAtStart,
-          recordedAt: new Date().toISOString(),
-          diagnosis: result.diagnosis ?? null,
-          advice: result.advice,
-          principleOps: result.principleOps,
-          assetCandidates: result.assetCandidates ?? [],
-        });
-        reflectorStartedAt = null;
-
-        if (!currentRun.active) {
-          appendMidRunDebugEntry(pi, {
-            phase: "finished-after-agent-end",
-            recordedAt: new Date().toISOString(),
-            sessionGeneration: generation,
-            runTurn: runTurnAtStart,
-            threshold: getMidRunThreshold(),
-            agentRound: agentRoundAtStart,
-            userTurns: userTurnAtStart,
-            currentRunActive: currentRun.active,
-            stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
-            processedUpToUserTurn: processedUserTurns,
-            adviceChars: result.advice.length,
-          });
-          logger?.debug("Mid-run Reflector finished after agent_end; steer skipped");
-          refreshWidget(ctx);
-          return;
-        }
-        if (currentRun.stuckReflectorDelivered) {
-          appendMidRunDebugEntry(pi, {
-            phase: "duplicate-delivery-skipped",
-            recordedAt: new Date().toISOString(),
-            sessionGeneration: generation,
-            runTurn: runTurnAtStart,
-            threshold: getMidRunThreshold(),
-            agentRound: agentRoundAtStart,
-            userTurns: userTurnAtStart,
-            currentRunActive: currentRun.active,
-            stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
-            processedUpToUserTurn: processedUserTurns,
-            adviceChars: result.advice.length,
-          });
-          logger?.debug("Mid-run Reflector advice already delivered; skipping duplicate steer");
-          refreshWidget(ctx);
-          return;
-        }
-
-        pi.sendMessage(
-          {
-            customType: "grc-mid-run-reflection-steer",
-            content: buildReflectorInjection(result.advice),
-            display: false,
-          },
-          { deliverAs: "steer" },
-        );
-        currentRun.stuckReflectorDelivered = true;
-        appendMidRunDebugEntry(pi, {
-          phase: "delivered",
-          recordedAt: new Date().toISOString(),
-          sessionGeneration: generation,
-          runTurn: runTurnAtStart,
-          threshold: getMidRunThreshold(),
-          agentRound: agentRoundAtStart,
-          userTurns: userTurnAtStart,
-          currentRunActive: currentRun.active,
-          stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
-          processedUpToUserTurn: processedUserTurns,
-          adviceChars: result.advice.length,
-        });
-        setTransientGRCStatus(ctx, "运行中反思已注入");
-        logger?.debug(`Mid-run Reflector delivered via steer (runTurn=${runTurnAtStart}, adviceChars=${result.advice.length}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result.diagnosis) ?? "none"}, assetCandidates=${result.assetCandidates?.length ?? 0})`);
-        refreshWidget(ctx);
-      })
-      .catch((err) => {
-        if (!grcState || generation !== sessionGeneration || !isRuntimeEnabled()) return;
-        grcState = updateReflectorStatus(grcState, "failed");
-        reflectorStartedAt = null;
-        appendMidRunDebugEntry(pi, {
-          phase: "failed",
-          recordedAt: new Date().toISOString(),
-          sessionGeneration: generation,
-          runTurn: runTurnAtStart,
-          threshold: getMidRunThreshold(),
-          agentRound: agentRoundAtStart,
-          userTurns: userTurnAtStart,
-          currentRunActive: currentRun.active,
-          stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
-          missingAuth: isMissingAuthError(err),
-          error: formatErrorMessage(err),
-        });
-        logger?.warn("Mid-run Reflector failed:", err);
-        refreshWidget(ctx);
-        if (isMissingAuthError(err)) {
-          logger?.warn("Mid-run Reflector disabled for this cycle due to missing model auth/config");
-          void safeNotify(ctx, "运行中 Reflector 不可用：缺少模型配置或 API Key，本轮已跳过。", "warning");
-        }
-      })
-      .finally(() => {
-        logger?.debug("Mid-run Reflector promise cleared");
-        reflectorPromise = null;
+    if (!currentRun.active) {
+      appendMidRunDebugEntry(pi, {
+        phase: "finished-after-agent-end",
+        recordedAt: new Date().toISOString(),
+        sessionGeneration: generation,
+        runTurn: runTurnAtStart,
+        threshold: getMidRunThreshold(),
+        agentRound: agentRoundAtStart,
+        userTurns: userTurnAtStart,
+        currentRunActive: currentRun.active,
+        stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+        processedUpToUserTurn: userTurnAtStart,
+        adviceChars: advice.length,
       });
+      logger?.debug("Mid-run steer skipped after agent_end");
+      refreshWidget(ctx);
+      return;
+    }
+
+    pi.sendMessage(
+      {
+        customType: "grc-mid-run-reflection-steer",
+        content: buildReflectorInjection(advice),
+        display: false,
+      },
+      { deliverAs: "steer" },
+    );
+    currentRun.stuckReflectorDelivered = true;
+    grcState = updateReflectorStatus(
+      grcState,
+      "done",
+      advice,
+      Math.max(grcState.reflector.processedUpToTurn, userTurnAtStart),
+      Math.max(grcState.reflector.processedUpToAgentRound, agentRoundAtStart),
+      agentRoundAtStart,
+      null,
+    );
+    appendMidRunDebugEntry(pi, {
+      phase: "delivered",
+      recordedAt: new Date().toISOString(),
+      sessionGeneration: generation,
+      runTurn: runTurnAtStart,
+      threshold: getMidRunThreshold(),
+      agentRound: agentRoundAtStart,
+      userTurns: userTurnAtStart,
+      currentRunActive: currentRun.active,
+      stuckReflectorDelivered: currentRun.stuckReflectorDelivered,
+      processedUpToUserTurn: userTurnAtStart,
+      adviceChars: advice.length,
+    });
+    setTransientGRCStatus(ctx, "运行中反思已注入");
+    logger?.debug(`Mid-run lightweight steer delivered (runTurn=${runTurnAtStart}, adviceChars=${advice.length})`);
+    refreshWidget(ctx);
   }
 
   function startGRCBackgroundJobs(ctx: ExtensionContext, targets: GRCJobTargets = "reflector"): void {
@@ -759,6 +650,10 @@ export default function (pi: ExtensionAPI) {
         sessionActive,
         targets,
       });
+      return;
+    }
+    if (!isCurrentSessionStateReady(ctx)) {
+      logger?.debug(`Skipped GRC background jobs: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"} (targets=${targets})`);
       return;
     }
     if (!isRuntimeEnabled()) {
@@ -786,13 +681,15 @@ export default function (pi: ExtensionAPI) {
     const userTurnAtStart = getCurrentUserTurnCount();
 
     const branch = ctx.sessionManager.getBranch();
-    const reflectorConversation = serializeConversation(branch, {
-      maxTokens: 16000,
-      preserveFirstUserMessage: true,
-      preserveRecentTurns: Math.max(1, config.grc.keepRecentAgentRounds),
-      includeToolResults: true,
-      toolResultMaxChars: 1000,
-    });
+    const reflectorConversation = serializeCurrentAgentRoundConversation(branch, (entries) =>
+      serializeConversation(entries, {
+        maxTokens: 16000,
+        preserveFirstUserMessage: true,
+        preserveRecentTurns: Math.max(1, config.grc.keepRecentAgentRounds),
+        includeToolResults: true,
+        toolResultMaxChars: 1000,
+      })
+    );
     const previousRoundConversation = serializePreviousAgentRoundConversation(branch, (entries) =>
       serializeConversation(entries, {
         maxTokens: 16000,
@@ -811,7 +708,7 @@ export default function (pi: ExtensionAPI) {
       currentGoalState: reflectorGoalState,
       goalContext: reflectorGoalContext,
       summaryCache: grcState.curator.summaryCache,
-      branchEntries: branch.map((entry) => entry.message as { type?: string; customType?: string; data?: unknown }),
+      branchEntries: branch as Array<{ type?: string; customType?: string; data?: unknown }>,
       principlesManager: principles,
       principleQuery: reflectorConversation,
     });
@@ -1029,6 +926,9 @@ export default function (pi: ExtensionAPI) {
       // Load or create configuration
       sessionActive = true;
       sessionGeneration += 1;
+      sessionRestoreReady = false;
+      activeSessionFile = getCurrentSessionFile(ctx);
+      sessionDisplayName = getSessionDisplayName(activeSessionFile);
       config = await ensureConfigExists();
       logger = createLogger(config.logLevel, config.logEnabled);
 
@@ -1038,10 +938,7 @@ export default function (pi: ExtensionAPI) {
 
       if (config.memory.enabled) {
         memory = createMemoryManager(config.memory, logger);
-        // Get session file path for session isolation
-        const sessionFile = ctx.sessionManager.getSessionFile();
-        sessionDisplayName = getSessionDisplayName(sessionFile);
-        await memory.init(sessionFile);
+        await memory.init(activeSessionFile);
       }
 
       principles = createPrinciplesManager(logger);
@@ -1100,6 +997,7 @@ export default function (pi: ExtensionAPI) {
       if (grcState) {
         grcState = clearRunningSubagentStatuses(grcState);
       }
+      sessionRestoreReady = true;
 
       logger?.info("PasstoContext loaded");
       logger?.info(
@@ -1131,6 +1029,10 @@ export default function (pi: ExtensionAPI) {
     }
 
     try {
+      if (!isCurrentSessionStateReady(ctx)) {
+        logger?.debug(`Skipped custom compaction: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"}`);
+        return;
+      }
       const curatorSummary =
         config.grc.enabled &&
         !orchestrationSuspended &&
@@ -1184,6 +1086,11 @@ export default function (pi: ExtensionAPI) {
 
     try {
       updateOrchestrationSuspension(ctx);
+
+      if (!isCurrentSessionStateReady(ctx)) {
+        logger?.debug(`before_agent_start skipped runtime injections: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"}`);
+        return;
+      }
 
       if (!isRuntimeEnabled()) {
         logger?.debug("before_agent_start skipped runtime injections: runtimeMode=off");
@@ -1313,6 +1220,10 @@ export default function (pi: ExtensionAPI) {
 
     try {
       updateOrchestrationSuspension(ctx);
+      if (!isCurrentSessionStateReady(ctx)) {
+        logger?.debug(`Skipped context optimization: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"}`);
+        return;
+      }
       if (!isRuntimeEnabled()) {
         logger?.debug("Skipped context optimization (runtimeMode=off)");
         return;
@@ -1515,6 +1426,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, _ctx) => {
     sessionActive = false;
     sessionGeneration += 1;
+    sessionRestoreReady = false;
+    activeSessionFile = null;
     try {
       await waitForBackgroundJobs(1500, logger);
 

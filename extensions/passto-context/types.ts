@@ -187,7 +187,7 @@ export interface ReflectorDiagnosis {
 }
 
 export interface ReflectorAssetCandidate {
-  type: "reference" | "script" | "skill";
+  type: "reference" | "script";
   title: string;
   rationale: string;
   evidence: string[];

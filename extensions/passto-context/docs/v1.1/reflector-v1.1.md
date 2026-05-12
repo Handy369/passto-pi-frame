@@ -27,7 +27,8 @@ Reflector 不应再被定义为“高级技术顾问”或“对当前 round 的
 2. `Generator`（主进程）当前 round 的执行是否偏离目标链；
 3. `Curator` 是否因错误判断而使 `GoalState` 逐轮漂移；
 4. 哪些经验值得沉淀为跨目标适用的原则；
-5. 哪些局部最佳实践已经成熟到应进一步沉淀为 `reference / script / skill` 级别的可复用能力资产。
+5. 哪些局部最佳实践已经成熟到应进一步沉淀为 `reference / script` 级别的可复用能力资产。
+   - `skill` 已不再属于 Reflector 当前职责；若未来恢复，应走独立模块/流程设计。
 
 因此 Reflector 的核心职责不是“总结刚刚发生了什么”，而是回答三个更高层的问题：
 
@@ -140,7 +141,8 @@ Generator 不负责：
 - 全局审计自己是否已持续偏航；
 - 纠正错误的 GoalState 基线；
 - 维护原则体系；
-- 判断最佳实践是否应升级为 `reference / script / skill`。
+- 判断最佳实践是否应升级为 `reference / script`。
+- `skill` 沉淀不再由 Reflector 直接提出，需留给未来独立模块。
 
 ---
 
@@ -436,7 +438,7 @@ interface ReflectorDiagnosis {
 }
 
 interface ReflectorAssetCandidate {
-  type: "reference" | "script" | "skill";
+  type: "reference" | "script";
   title: string;
   rationale: string;
   evidence: string[];
@@ -601,8 +603,8 @@ Reflector 不能无结构地“看完再评论”，而应遵循固定顺序。
 ### Step 4：模式蒸馏
 最后判断：
 - 当前最佳实践是单次技巧，还是稳定模式；
-- 若是稳定模式，应沉淀为 `reference / script / skill` 中哪一种；
-- 如果是 skill，是否适合 `router + references/ + scripts/` 的聚合结构。
+- 若是稳定模式，应沉淀为 `reference / script` 中哪一种。
+- `skill` 方向当前不在 Reflector 决策面内，后续若需要，应单独设计模块与触发条件。
 
 任何实现若跳过 Step 2 直接输出原则，或跳过 Step 3 直接产出资产候选，都容易产生语义漂移。
 
@@ -836,15 +838,14 @@ Reflector 不应轻易 `conflict`。只有当新证据足以说明旧原则会�
 
 ---
 
-### 14.4 Reflector 对 skill 候选的最低输出要求
+### 14.4 Skill 候选已移出 Reflector 当前职责
 
-当 Reflector 判断某模式值得沉淀为 skill 时，至少应说清：
+当前实现与当前职责边界下：
 
-1. 这类 Skill 解决什么重复问题；
-2. 更适合独立 Skill 还是聚合 Skill；
-3. 是否需要 `router + references/ + scripts/`；
-4. 主要路由维度是什么：平台 / 格式 / 操作 / 复合意图；
-5. 是否已有共享脚本或共享参考材料。
+1. Reflector 不再输出 `skill` 候选；
+2. `skill` 是否值得沉淀，需要未来单独模块结合更长时间窗信号判断；
+3. 例如可基于大 turn 阈值、重复错误模式、跨轮复发证据等独立触发；
+4. 在该独立模块成形前，Reflector 仅保留 `reference / script` 候选能力。
 
 ---
 
@@ -894,8 +895,8 @@ interface ReflectorArtifactEntry {
 ### 16.5 缺少 Reflector artifact 持久层
 Curator 已有 `grc-curator-artifact`。Reflector 若要支持长期回顾与失败分析，也应有自己的结构化 artifact。
 
-### 16.6 缺少模式蒸馏链路
-当前系统只有 `principleOps`，尚无 `reference / script / skill` 候选输出面。
+### 16.6 缺少独立的能力蒸馏链路
+当前系统虽已有 `assetCandidates`，但其现行职责仅覆盖 `reference / script`。`skill` 候选已明确移出 Reflector，需要未来单独模块承接。
 
 ### 16.7 当前语义字段存在张力
 `goalContext.siblingActiveGoals` 在现状里并不总是严格“active”，文档与实现必须正视这点，不能在未修复前把它当作严格语义字段使用。

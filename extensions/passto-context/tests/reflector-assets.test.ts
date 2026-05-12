@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { normalizeReflectorAssetCandidates } from '../grc-reflector-assets.ts';
 
-test('normalizeReflectorAssetCandidates accepts valid reference/script/skill candidates', () => {
+test('normalizeReflectorAssetCandidates accepts valid reference/script candidates', () => {
   const candidates = normalizeReflectorAssetCandidates([
     {
       type: 'reference',
@@ -21,16 +21,10 @@ test('normalizeReflectorAssetCandidates accepts valid reference/script/skill can
       evidence: ['test:reflector 已覆盖 grounding / diagnosis / assets。'],
       scope: 'domain',
     },
-    {
-      type: 'skill',
-      title: 'Reflector implementation reviewer',
-      rationale: '后续可把 Reflector 迭代注意事项沉淀成专用 review skill。',
-      evidence: ['当前已形成多批次渐进实现方法。'],
-    },
   ]);
 
-  assert.equal(candidates.length, 3);
-  assert.deepEqual(candidates.map((item) => item.type), ['reference', 'script', 'skill']);
+  assert.equal(candidates.length, 2);
+  assert.deepEqual(candidates.map((item) => item.type), ['reference', 'script']);
 });
 
 test('normalizeReflectorAssetCandidates rejects invalid candidates as a whole', () => {

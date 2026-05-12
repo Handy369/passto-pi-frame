@@ -19,11 +19,11 @@ export function buildBaseGRCPrompt(): string {
 
 export function buildReflectionSteerPrompt(): string {
   return [
-    "[PasstoContext] 当前对话已进行较多轮交互。",
-    "在继续之前，请用 2-3 句话简要回顾:",
-    "1. 到目前为止的主要进展",
-    "2. 当前方向是否仍然正确",
-    "然后继续你的工作。",
+    "[PasstoContext] 当前这个 agent-round 已经持续了较多 turn。",
+    "先暂停一下，做一次极短反思：",
+    "1. 你现在的目标是否仍然清晰且未变化？",
+    "2. 你刚才是否在重复读取/调用相近工具，出现绕圈迹象？",
+    "3. 下一步只做一个最能推进结果的动作，然后继续执行。",
   ].join("\n");
 }
 
@@ -87,7 +87,7 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     "",
     "## 能力沉淀候选",
     "若没有成熟候选，必须只写：无。",
-    "不要在正文中发出自动创建 skill/script/reference 的执行指令。",
+    "不要在正文中发出自动创建 script/reference 的执行指令，也不要提出新增 skill 的建议。",
     "",
     "## 结构化结果",
     "在正文之后，额外输出一个 JSON 代码块，格式如下：",
@@ -113,7 +113,7 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     "```",
     "如果没有值得沉淀或更新的原则或模式候选，则输出 {\"diagnosis\": {...}, \"principleOps\":[], \"assetCandidates\":[]}。",
     "principleOps 必须来自本轮真实执行经验，并与当前目标链相关，而不是空洞常识。",
-    "assetCandidates 最多 3 条；每条必须包含 type / title / rationale / evidence，且只表达候选，不得包含自动执行语义。",
+    "assetCandidates 最多 3 条；type 仅允许 reference / script。每条必须包含 type / title / rationale / evidence，且只表达候选，不得包含自动执行语义。",
     "diagnosis 必须与正文判断一致；若把握不足，可以降低 confidence，但不要编造证据。",
     "",
     "# 约束",

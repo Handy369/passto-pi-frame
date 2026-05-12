@@ -89,6 +89,13 @@
   - [x] `test:compaction`
   - [x] `test:status`
   - [x] `test:round-state`
+- [x] `npm run test:tmux`
+  - [x] `test:tui`
+  - [x] `test:midrun`
+  - [x] `test:reflector-replay`
+- [x] `npm run test:regression`
+  - [x] `test:grc`
+  - [x] `test:tmux`
 
 ### 2.2 新增 / 已覆盖的关键验证点
 
@@ -105,6 +112,8 @@
 - [x] `npm test`
 - [x] `npm run test:tui`
 - [x] `npm run test:midrun`
+- [x] `npm run test:reflector-replay`
+- [x] `npm run test:tmux`
 
 ---
 

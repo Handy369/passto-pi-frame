@@ -63,7 +63,6 @@ function parseCandidateType(raw: unknown): ReflectorAssetCandidate['type'] | nul
   switch (raw) {
     case 'reference':
     case 'script':
-    case 'skill':
       return raw;
     default:
       return null;

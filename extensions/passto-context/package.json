@@ -21,14 +21,17 @@
     "test": "./scripts/tui-regression.sh",
     "test:tui": "./scripts/tui-regression.sh",
     "test:midrun": "./scripts/midrun-regression.sh",
+    "test:reflector-replay": "./scripts/reflector-replay-regression.sh",
+    "test:tmux": "npm run test:tui && npm run test:midrun && npm run test:reflector-replay",
     "test:curator": "node --experimental-strip-types --test tests/grc-curator-output.test.ts tests/curator-round-normalization.test.ts tests/curator-prompt-goal-persistence.test.ts tests/curator-goal-guard.test.ts",
     "test:restore": "node --experimental-strip-types --test tests/index-restore-replay.test.ts",
     "test:reflector": "node --experimental-strip-types --test tests/reflector-input.test.ts tests/reflector-grounding.test.ts tests/reflector-assets.test.ts tests/reflector-diagnosis.test.ts tests/reflector-output.test.ts tests/grc-goal-view-alignment.test.ts",
-    "test:context-manager": "node --experimental-strip-types --test tests/grc-context-manager.test.ts tests/context-preserves-current-prompt.test.ts",
+    "test:context-manager": "node --experimental-strip-types --test tests/grc-context-manager.test.ts tests/context-preserves-current-prompt.test.ts tests/grc-session-guard.test.ts",
     "test:compaction": "node --experimental-strip-types --test tests/compaction-handler.test.ts",
     "test:status": "node --experimental-strip-types --test tests/status-without-objective-ledger.test.ts tests/widget-status.test.ts",
     "test:round-state": "node --experimental-strip-types --test tests/grc-round-state.test.ts",
-    "test:grc": "npm run test:curator && npm run test:restore && npm run test:reflector && npm run test:context-manager && npm run test:compaction && npm run test:status && npm run test:round-state"
+    "test:grc": "npm run test:curator && npm run test:restore && npm run test:reflector && npm run test:context-manager && npm run test:compaction && npm run test:status && npm run test:round-state",
+    "test:regression": "npm run test:grc && npm run test:tmux"
   },
   "dependencies": {}
 }

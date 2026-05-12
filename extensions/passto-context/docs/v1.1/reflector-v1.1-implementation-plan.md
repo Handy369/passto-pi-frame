@@ -382,7 +382,7 @@ lastDiagnosis?: ReflectorDiagnosis | null;
 
 ```ts
 interface ReflectorAssetCandidate {
-  type: "reference" | "script" | "skill";
+  type: "reference" | "script";
   title: string;
   rationale: string;
   evidence: string[];
@@ -420,7 +420,8 @@ assetCandidates?: ReflectorAssetCandidate[];
 
 ### 8.3 本批不做什么
 
-- 不创建 skill/script/reference 文件
+- 不创建 script/reference 文件
+- 不新增 skill 候选职责或 skill 生成链路
 - 不对 `/ptc status` 做复杂展示
 - 不做自动任务派发
 
@@ -435,7 +436,7 @@ assetCandidates?: ReflectorAssetCandidate[];
 - 空 candidates 测试
 - 合法 candidates 解析测试
 - 非法 candidates 丢弃测试
-- skill/script/reference 三类 schema 测试
+- reference/script 两类 schema 测试
 
 ---
 
@@ -514,6 +515,9 @@ Batch 5 已完成，当前实现口径为：
    - `/ptc status` 可显示 `Latest Reflector Diagnosis`
    - `/reload` 后 diagnosis 仍可见
    - replay 前后 `Last reflected round` 保持一致
+   - 已新增 `npm run test:reflector-replay` 自动化脚本覆盖该链路
+   - 已新增 `npm run test:tmux` 聚合 `test:tui + test:midrun + test:reflector-replay`
+   - 已新增 `npm run test:regression` 作为主回归入口，串联 `test:grc + test:tmux`
 
 ---
 

@@ -5,8 +5,10 @@ import {
   getLatestUserMessageText,
   getPreviousAgentRoundEntries,
   getSlidingWindowAgentRoundMessages,
+  serializeCurrentAgentRoundConversation,
   serializePreviousAgentRoundConversation,
 } from '../grc-context-manager.ts';
+import { serializeConversation } from '../grc-subagent.ts';
 
 const branch = [
   {
@@ -86,6 +88,74 @@ test('serializePreviousAgentRoundConversation serializes the previous round conv
 test('getLatestUserMessageText returns current user first message content from branch tail', () => {
   const text = getLatestUserMessageText(branch);
   assert.equal(text, '继续把 Curator 挪到 before_agent_start');
+});
+
+test('serializeCurrentAgentRoundConversation keeps reflector input anchored to current round instead of the session first user message', () => {
+  const branchWithGoalSwitch = [
+    {
+      type: 'custom',
+      customType: 'passto-round-boundary',
+      data: {
+        customType: 'passto-round-boundary',
+        agentRound: 1,
+        totalCompletedAgentRounds: 0,
+        userTurnsAtStart: 1,
+      },
+    },
+    {
+      type: 'message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '请审计 ai-research 项目' }],
+      },
+    },
+    {
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '先查看仓库结构。' }],
+      },
+    },
+    {
+      type: 'custom',
+      customType: 'passto-round-boundary',
+      data: {
+        customType: 'passto-round-boundary',
+        agentRound: 2,
+        totalCompletedAgentRounds: 1,
+        userTurnsAtStart: 2,
+      },
+    },
+    {
+      type: 'message',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '继续执行 email2ai 的 V2-0 Step 10' }],
+      },
+    },
+    {
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: '开始做 Step 10 收口。' }],
+      },
+    },
+  ];
+
+  const serialized = serializeCurrentAgentRoundConversation(
+    branchWithGoalSwitch,
+    (entries) => serializeConversation(entries, {
+      maxTokens: 16000,
+      preserveFirstUserMessage: true,
+      preserveRecentTurns: 2,
+      includeToolResults: true,
+      toolResultMaxChars: 1000,
+    }),
+  );
+
+  assert.match(serialized, /继续执行 email2ai 的 V2-0 Step 10/);
+  assert.match(serialized, /开始做 Step 10 收口/);
+  assert.doesNotMatch(serialized, /请审计 ai-research 项目/);
 });
 
 test('getSlidingWindowAgentRoundMessages keeps at least min recent rounds even when token budget is tiny', () => {

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildReflectorGoalContext } from '../grc-goal-context.ts';
-import { buildReflectorSubagentPrompt } from '../grc-prompts.ts';
+import { buildReflectionSteerPrompt, buildReflectorSubagentPrompt } from '../grc-prompts.ts';
 import type { GoalStateDocument } from '../types.ts';
 
 const goalState: GoalStateDocument = {
@@ -99,4 +99,16 @@ test('buildReflectorSubagentPrompt includes current goal state and goal context 
   assert.match(prompt, /## 顾问意见/);
   assert.match(prompt, /"diagnosis"/);
   assert.match(prompt, /"currentFocusGoalId": "g-12"/);
+});
+
+test('buildReflectionSteerPrompt stays lightweight and focuses on loop avoidance', () => {
+  const prompt = buildReflectionSteerPrompt();
+
+  assert.match(prompt, /agent-round 已经持续了较多 turn/);
+  assert.match(prompt, /极短反思/);
+  assert.match(prompt, /重复读取\/调用相近工具/);
+  assert.match(prompt, /下一步只做一个最能推进结果的动作/);
+  assert.doesNotMatch(prompt, /summaryCacheExcerpt/);
+  assert.doesNotMatch(prompt, /principleOps/);
+  assert.doesNotMatch(prompt, /assetCandidates/);
 });

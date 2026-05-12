@@ -431,6 +431,13 @@ before_agent_start
   - compaction 的 curator-only 接管
   - `/ptc status` 的收敛口径
   - round-state 更新与恢复
+- `npm run test:tmux` 已聚合真实 Pi / tmux 集成回归：
+  - `test:tui`
+  - `test:midrun`
+  - `test:reflector-replay`
+- `npm run test:regression` 作为新的主回归入口，串联：
+  - `test:grc`
+  - `test:tmux`
 - 真实 TUI 回归脚本已覆盖：
   - `/ptc status`
   - `/ptc on`
@@ -446,7 +453,16 @@ before_agent_start
 
 ### 自动化验证
 
-项目提供两类真实 Pi TUI 回归脚本：
+当前建议的回归入口分层如下：
+
+- `npm run test:grc`
+  - 快速 Node 回归链，不依赖 tmux
+- `npm run test:tmux`
+  - 真实 Pi / tmux 集成回归聚合链：`test:tui + test:midrun + test:reflector-replay`
+- `npm run test:regression`
+  - 当前主回归链：`test:grc + test:tmux`
+
+项目提供三类真实 Pi TUI 回归脚本：
 
 ### 基础 TUI 回归
 
@@ -497,6 +513,28 @@ npm run test:midrun
 
 相比只观察 pane 文本，`test:midrun` 以 session jsonl 中的持久化审计 entry 为主判据，更适合稳定回归。`grc-mid-run-debug` 是稳定主证据，`grc-mid-run-reflection-steer` 是否单独落盘取决于当前会话记录形态，因此不作为唯一硬性断言。
 
+### Reflector replay 回归
+
+当修改 `grc-reflector-artifact`、`session_start` restore/replay、`/ptc status`、`Latest Reflector Diagnosis` 或 round 对齐语义时，运行：
+
+```bash
+npm run test:reflector-replay
+```
+
+或直接运行：
+
+```bash
+./scripts/reflector-replay-regression.sh
+```
+
+该脚本基于 `tmux` 驱动真实 Pi 会话，并以 session jsonl 作为主证据，验证：
+
+- post-round Reflector 会落盘 `grc-reflector-artifact`
+- `/ptc status` 在 reload 前后都能显示 `Latest Reflector Diagnosis`
+- 最新 artifact 的 `agentRound` 与 `/ptc status` 的 `Last reflected round` 一致
+- 最新 `grc-state.reflector.processedUpToAgentRound` 与 `lastReflectedAgentRound` 都对齐到最新 artifact round
+- replay 只恢复 latest 轻状态视图，不依赖人工目测 pane 文本
+
 ## 最小手工验证方案（tmux）
 
 当你修改 `grc-reflector-artifact`、restore/replay、`/ptc status` 或 `Latest Reflector Diagnosis` 相关链路时，建议做一次真实 TUI 手工验证。
@@ -506,7 +544,7 @@ npm run test:midrun
 确认以下 5 点：
 
 1. Reflector 完成后会落盘 `grc-reflector-artifact`
-2. artifact 中包含 `diagnosis / advice / principleOps / assetCandidates`
+2. artifact 中包含 `diagnosis / advice / principleOps / assetCandidates`（当前 `assetCandidates` 仅限 `reference / script`，不含 `skill`）
 3. 重启或 `/reload` 后，`session_start` 能 replay 最新 Reflector artifact
 4. `/ptc status` 能显示 `Latest Reflector Diagnosis`，并在有 advice 时显示 `Latest Reflector Advice`
 5. replay 后 `processedUpToAgentRound` 与 `lastReflectedAgentRound` 语义一致，不会出现 latest diagnosis 已恢复但 processed round 落后于 artifact round 的情况
@@ -610,8 +648,9 @@ passto-context/
 │       └── V1_1_CODE_AUDIT.md          # 历史审计文档
 ├── tests/                    # Node 回归测试
 ├── scripts/
-│   ├── tui-regression.sh     # 真实 Pi TUI 回归脚本（tmux 驱动）
-│   └── midrun-regression.sh  # mid-run Reflector 回归脚本
+│   ├── tui-regression.sh              # 真实 Pi TUI 回归脚本（tmux 驱动）
+│   ├── midrun-regression.sh           # mid-run Reflector 回归脚本
+│   └── reflector-replay-regression.sh # Reflector replay / reload 回归脚本
 └── package.json              # 包清单 / 测试命令
 ```
 

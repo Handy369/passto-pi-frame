@@ -134,7 +134,7 @@ Reflector 输出：
 - `advice`
 - `diagnosis`
 - `principleOps`
-- `assetCandidates`
+- `assetCandidates`（当前仅限 `reference / script`，不含 `skill`）
 - `grc-reflector-artifact`（持久化后供 restore / replay）
 
 ### 4.6 session_before_compact
@@ -280,7 +280,16 @@ Curator：
 
 ## 10. 当前测试覆盖
 
-当前主回归链 `npm run test:grc` 覆盖：
+当前回归入口分层如下：
+
+- `npm run test:grc`
+  - 快速 Node 回归链
+- `npm run test:tmux`
+  - 真实 Pi / tmux 集成回归聚合链（`test:tui + test:midrun + test:reflector-replay`）
+- `npm run test:regression`
+  - 当前主回归链，串联 `test:grc + test:tmux`
+
+其中 `npm run test:grc` 覆盖：
 
 - Curator 输出解析
 - Curator artifact restore
@@ -292,6 +301,15 @@ Curator：
 - compaction handler 的 curator-only 接管
 - round-based state 字段更新与 restore
 - `/ptc status` 的收敛口径
+
+其中 `npm run test:tmux` 额外覆盖：
+
+- `/ptc status` / `/ptc on` / `/ptc off` / `/ptc config`
+- `/reload` 后 runtime 状态恢复
+- `/new` 后 session-scoped 运行态重置
+- mid-run Reflector 的 `grc-mid-run-debug` 审计链
+- Reflector artifact 的真实 append / replay / reload 恢复
+- `Latest Reflector Diagnosis` / `Latest Reflector Advice` 的真实 TUI 展示与恢复
 
 ---
 

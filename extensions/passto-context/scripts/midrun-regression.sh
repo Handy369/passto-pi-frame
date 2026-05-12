@@ -112,7 +112,7 @@ JSON
 
 printf '[info] Starting Pi mid-run regression session\n'
 tmux -L "$SOCK_NAME" new-session -d -s "$SESSION_NAME" -x 140 -y 42 \
-  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
+  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider ds4 --model deepseek-v4-flash --thinking low --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
 
 wait_for_pattern startup "PasstoContext ready|Loaded [0-9]+ principles" 60 1
 capture startup
@@ -127,10 +127,11 @@ assert_log_has "$LOG_DIR/status-before.log" "Reflector status\*\*: idle"
 PROMPT=$(cat <<'EOF'
 请你在 /Users/handy/dev/passto-ai/extensions/passto-context 中逐个检查这些文件：index.ts、grc-state.ts、grc-prompts.ts、grc-subagent.ts、config.ts、types.ts。
 要求：
-1. 不要一次性用一个大 grep 直接总结全部结论。
-2. 逐文件读取真实内容，至少确认 5 个文件。
-3. 每检查完一个文件，记录它与 GRC 触发链路的关系。
-4. 最后输出一份简短的一致性报告。
+1. 禁止使用 bash / ls / find / grep；直接使用 read 工具逐文件读取真实内容。
+2. 一次只处理一个文件，完成当前文件后再继续下一个，不要把多个文件放在同一轮一起处理。
+3. 至少确认 5 个文件。
+4. 每检查完一个文件，立刻记录它与 GRC 触发链路的关系。
+5. 最后输出一份简短的一致性报告。
 EOF
 )
 
@@ -153,8 +154,8 @@ fi
 
 echo "[info] session_jsonl=$SESSION_JSONL"
 
-wait_for_jsonl_pattern "$SESSION_JSONL" '"customType":"grc-mid-run-debug"' 120 1
-wait_for_jsonl_pattern "$SESSION_JSONL" '"phase":"delivered"' 180 1
+wait_for_jsonl_pattern "$SESSION_JSONL" '"customType":"grc-mid-run-debug"' 240 1
+wait_for_jsonl_pattern "$SESSION_JSONL" '"phase":"delivered"' 300 1
 
 assert_jsonl_has "$SESSION_JSONL" '"customType":"grc-mid-run-debug"'
 assert_jsonl_has "$SESSION_JSONL" '"phase":"triggered"'

@@ -231,3 +231,55 @@ test('parseReflectorOutput drops invalid assetCandidates without affecting diagn
   assert.deepEqual(result.principleOps, [{ op: 'reuse', targetId: 'principle_review_before_execute' }]);
   assert.deepEqual(result.assetCandidates ?? [], []);
 });
+
+test('parseReflectorOutput rejects skill assetCandidates and keeps diagnosis/principleOps', () => {
+  const raw = [
+    '## 目标对齐判断',
+    '当前执行基本对齐。',
+    '',
+    '## 偏移归因',
+    '- 无明显偏移。',
+    '',
+    '## 顾问意见',
+    '- 保持能力沉淀与 Reflector 解耦。',
+    '',
+    '## 原则判断',
+    '- 复用职责单一原则。',
+    '',
+    '## 能力沉淀候选',
+    '无',
+    '',
+    '```json',
+    '{',
+    '  "diagnosis": {',
+    '    "aligned": true,',
+    '    "driftSource": "none",',
+    '    "confidence": 0.88,',
+    '    "evidence": ["skill 候选已不再属于 Reflector 职责。"]',
+    '  },',
+    '  "principleOps": [',
+    '    { "op": "reuse", "targetId": "principle_single_responsibility" }',
+    '  ],',
+    '  "assetCandidates": [',
+    '    {',
+    '      "type": "skill",',
+    '      "title": "Reflector skill candidate",',
+    '      "rationale": "这个类型现在应被拒绝。",',
+    '      "evidence": ["skill 沉淀要移到单独模块。"]',
+    '    }',
+    '  ]',
+    '}',
+    '```',
+  ].join('\n');
+
+  const result = parseReflectorOutput(raw);
+  assert.ok(result);
+  assert.deepEqual(result.diagnosis, {
+    aligned: true,
+    driftSource: 'none',
+    confidence: 0.88,
+    evidence: ['skill 候选已不再属于 Reflector 职责。'],
+  });
+  assert.deepEqual(result.principleOps, [{ op: 'reuse', targetId: 'principle_single_responsibility' }]);
+  assert.deepEqual(result.assetCandidates ?? [], []);
+});

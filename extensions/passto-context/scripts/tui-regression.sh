@@ -76,7 +76,7 @@ run_reload() {
 
 printf '[info] Starting Pi TUI regression session\n'
 tmux -L "$SOCK_NAME" new-session -d -s "$SESSION_NAME" -x 120 -y 36 \
-  "pi --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
+  "pi --provider ds4 --model deepseek-v4-flash --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
 
 sleep 2
 wait_for_prompt_ready

@@ -469,7 +469,7 @@ test('restoreCuratorStateFromBranchEntries rehydrates latest reflector artifact 
           principleOps: [{ op: 'reuse', targetId: 'principle_round21' }],
           assetCandidates: [
             {
-              type: 'skill',
+              type: 'script',
               title: 'Round 21 candidate',
               rationale: '仍然只是候选。',
               evidence: ['round 21 asset'],
