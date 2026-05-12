@@ -519,6 +519,34 @@ Batch 5 已完成，当前实现口径为：
    - 已新增 `npm run test:tmux` 聚合 `test:tui + test:midrun + test:reflector-replay`
    - 已新增 `npm run test:regression` 作为主回归入口，串联 `test:grc + test:tmux`
 
+### 9.7 完整回归复验（2026-05-12）
+
+已在 `extensions/passto-context` 目录实际执行：
+
+- `npm run test:grc`
+- `npm run test:tmux`
+- `npm run test:regression`
+
+结果：
+
+1. Node 主回归通过
+   - `test:curator`
+   - `test:restore`
+   - `test:reflector`
+   - `test:context-manager`
+   - `test:compaction`
+   - `test:status`
+   - `test:round-state`
+
+2. 真实 Pi / tmux 集成回归通过
+   - `test:tui`：`/ptc status`、`/ptc on`、`/ptc off`、`/reload`、`/new`、`/resume` 入口验证通过
+   - `test:midrun`：`grc-mid-run-debug` 与 `grc-mid-run-reflection-steer` 已在真实 session jsonl 中出现
+   - `test:reflector-replay`：`grc-reflector-artifact` 落盘，`/reload` 后 replay 恢复通过，`processedUpToAgentRound` 与 `lastReflectedAgentRound` 与最新 artifact round 对齐
+
+3. 本次复验结论
+   - 未发现新的 Batch 5 阻塞问题
+   - 当前 Batch 5 代码、回归脚本、文档口径保持一致
+
 ---
 
 ## 10. 文件级实施建议

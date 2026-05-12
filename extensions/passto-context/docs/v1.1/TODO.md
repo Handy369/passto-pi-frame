@@ -115,6 +115,16 @@
 - [x] `npm run test:reflector-replay`
 - [x] `npm run test:tmux`
 
+### 2.4 完整回归复验（2026-05-12）
+
+- [x] 已实际执行 `npm run test:regression`
+- [x] `test:grc` 全通过
+- [x] `test:tmux` 全通过
+- [x] `test:tui` 通过：`/ptc status`、`/ptc on`、`/ptc off`、`/reload`、`/new`、`/resume` 入口正常
+- [x] `test:midrun` 通过：`grc-mid-run-debug` 与 `grc-mid-run-reflection-steer` 均在真实会话中落盘/可见
+- [x] `test:reflector-replay` 通过：`grc-reflector-artifact` 可落盘，`/reload` 后 `Latest Reflector Diagnosis/Advice` 与 round 字段恢复保持一致
+- [x] 本次复验未发现新的 Batch 5 阻塞问题
+
 ---
 
 ## 3. 文档收尾状态
