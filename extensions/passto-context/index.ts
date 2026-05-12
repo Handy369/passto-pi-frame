@@ -33,7 +33,8 @@ import {
   updateCuratorStatus,
   updateReflectorStatus,
 } from "./grc-state.js";
-import { buildBaseGRCPrompt, buildGoalStateInjection, buildReflectionSteerPrompt, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
+import { buildGeneratorCharterPrompt, buildGoalStateInjection, buildReflectionSteerPrompt, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
+import { ensureAppendSystemPromptSync } from "./grc-generator-contract.ts";
 import { buildReflectorGoalContext } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
 import { formatReflectorDiagnosisLabel } from "./grc-reflector-diagnosis.ts";
@@ -43,6 +44,7 @@ import { createPrinciplesManager, formatPrinciplesForInjection } from "./grc-pri
 import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
 import { formatPTCStatus } from "./ptc-status.ts";
+import { getPTCUsageText, handlePTCPrinciplesReviewCommand } from "./ptc-principles-review-command.ts";
 import { appendWidgetNotice, getVisibleWidgetNotice, type WidgetNoticeState } from "./widget-status.ts";
 import {
   getCurrentAgentRoundEntries,
@@ -999,6 +1001,15 @@ export default function (pi: ExtensionAPI) {
       }
       sessionRestoreReady = true;
 
+      const appendSystemSync = await ensureAppendSystemPromptSync();
+      if (appendSystemSync.status === "updated") {
+        logger?.info(`APPEND_SYSTEM synced from generator contract: ${appendSystemSync.targetPath}`);
+      } else if (appendSystemSync.status === "unchanged") {
+        logger?.debug(`APPEND_SYSTEM already in sync: ${appendSystemSync.targetPath}`);
+      } else {
+        logger?.warn(`Skipped APPEND_SYSTEM sync because generator contract is missing: ${appendSystemSync.targetPath}`);
+      }
+
       logger?.info("PasstoContext loaded");
       logger?.info(
         `Config loaded (logEnabled=${config.logEnabled}, logLevel=${config.logLevel}, memory=${config.memory.enabled}, tracking=${config.tracking.enabled}, grc=${config.grc.enabled})`,
@@ -1109,11 +1120,11 @@ export default function (pi: ExtensionAPI) {
 
       const grcPromptEnabled = config.grc.enabled && !orchestrationSuspended;
       if (grcPromptEnabled) {
-        systemPrompt += `\n\n${buildBaseGRCPrompt()}`;
-        injectionDiagnostics.push("base-grc");
+        systemPrompt += `\n\n${buildGeneratorCharterPrompt()}`;
+        injectionDiagnostics.push("generator-charter");
       } else {
         injectionDiagnostics.push(
-          `base-grc:skip(grcEnabled=${config.grc.enabled}, suspended=${orchestrationSuspended}, runtimeMode=${grcState?.runtimeMode ?? "n/a"})`,
+          `generator-charter:skip(grcEnabled=${config.grc.enabled}, suspended=${orchestrationSuspended}, runtimeMode=${grcState?.runtimeMode ?? "n/a"})`,
         );
       }
 
@@ -1488,13 +1499,22 @@ export default function (pi: ExtensionAPI) {
    * /ptc - PasstoContext minimal control surface
    */
   pi.registerCommand("ptc", {
-    description: "PasstoContext 控制台：status / on / off / config",
+    description: "PasstoContext 控制台：status / on / off / config / principles review export / principles review import",
     handler: async (args, ctx) => {
       const input = args?.trim() ?? "";
       if (!input) {
         handlePTCStatus(ctx);
         return;
       }
+
+      const handledPrinciplesReview = config && logger
+        ? await handlePTCPrinciplesReviewCommand(input, {
+            principlesDir: expandHome(config.grc.principlesDir),
+            logger,
+            notify: (message, level) => ctx.ui.notify(message, level),
+          })
+        : false;
+      if (handledPrinciplesReview) return;
 
       const parts = input.split(/\s+/);
       const subcommand = parts[0]?.toLowerCase();
@@ -1513,7 +1533,7 @@ export default function (pi: ExtensionAPI) {
           await handlePTCConfig(ctx);
           return;
         default:
-          ctx.ui.notify("Usage: /ptc [status|on|off|config]", "warning");
+          ctx.ui.notify(getPTCUsageText(), "warning");
       }
     },
   });

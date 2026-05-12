@@ -5,7 +5,7 @@
 > 命名映射：本文中的 `/pta`、`manualMode` 等字段均为历史收尾阶段表述；当前公开命令面与主运维口径请以 `/ptc`、`runtimeMode` 为准。
 > 背景设计文档：`DESIGN-GRC-v1.1.md`、`curator-v1.1.md`
 > 历史过程文档：`PASSTO_CONTEXT_V1_1_PLAN.md`、`V1_1_CODE_AUDIT.md`、`V1_1_CONVERGED_ARCHITECTURE_DRAFT.md`
-> 最后更新：2026-05-09
+> 最后更新：2026-05-12
 
 ---
 
@@ -75,6 +75,15 @@
   - `Latest Reflector Advice`
 - [x] mid-run Reflector 已具备 `grc-mid-run-debug` 持久化审计链
 
+### 1.6 静态提示词单一维护源 / 双出口收敛
+
+- [x] `references/generator-contract.md` 已成为静态单一维护源
+- [x] `buildGeneratorCharterPrompt()` 已从 `generator-contract.md` 投影 Generator Charter，而不重复注入 Constitution
+- [x] `APPEND_SYSTEM.md` 已收敛为 Constitution-only 静态出口
+- [x] `session_start` 会自动同步 Constitution 投影到 `~/.pi/agent/APPEND_SYSTEM.md`
+- [x] 自动同步具备安全边界：若 `generator-contract.md` 缺失，则跳过写盘，不使用 fallback 覆盖全局文件
+- [x] `APPEND_SYSTEM.md` 不再作为手工编辑源
+
 ---
 
 ## 2. 已补齐的回归测试
@@ -106,6 +115,9 @@
 - [x] `session_before_compact` 仅在存在 Curator summary 时接管
 - [x] `/ptc status`（历史阶段原称 `/pta status`）不再依赖 Objective / Ledger
 - [x] round-based 状态字段更新与恢复
+- [x] `buildGeneratorCharterPrompt()` 契约测试已覆盖
+- [x] `APPEND_SYSTEM.md` / `generator-contract.md` 导出边界测试已覆盖
+- [x] `ensureAppendSystemPromptSync()` 自动同步测试已覆盖（missing target / unchanged / missing contract skip）
 
 ### 2.3 TUI / 集成脚本
 
@@ -133,6 +145,9 @@
 - [x] `README.md` 已加入最终架构入口链接
 - [x] `README.md` 已同步 `/ptc status`（历史阶段原称 `/pta status`）最终口径
 - [x] `README.md` 已同步 context / compaction 主路径说明
+- [x] `README.md` 已同步 `generator-contract.md → buildGeneratorCharterPrompt() / APPEND_SYSTEM.md` 双出口与自动同步说明
+- [x] `V1_1_GENERATOR_PROMPT_ARCHITECTURE.md` 已同步自动同步实现现状、验证覆盖与“非手工编辑源”口径
+- [x] `V1_1_FINAL_ARCHITECTURE.md` 已在 `session_start` 总览中纳入 `APPEND_SYSTEM.md` 自动同步说明
 - [x] 本文件已从“实施 TODO”改写为“收尾归档”文档
 
 ---

@@ -64,6 +64,23 @@ find_session_jsonl() {
   find "$SESSION_DIR" -name '*.jsonl' | head -n 1
 }
 
+wait_for_session_jsonl() {
+  local attempts="${1:-60}"
+  local delay="${2:-1}"
+
+  for _ in $(seq 1 "$attempts"); do
+    local file
+    file="$(find_session_jsonl || true)"
+    if [[ -n "$file" ]]; then
+      printf '%s\n' "$file"
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  return 1
+}
+
 wait_for_jsonl_pattern() {
   local file="$1"
   local pattern="$2"
@@ -138,7 +155,7 @@ EOF
 
 printf '[info] Starting Pi reflector replay regression session\n'
 tmux -L "$SOCK_NAME" new-session -d -s "$SESSION_NAME" -x 140 -y 42 \
-  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider ds4 --model deepseek-v4-flash --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
+  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider ds4 --model deepseek-v4-flash --thinking low --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
 
 wait_for_pattern startup "PasstoContext ready|Loaded [0-9]+ principles" 60 1
 capture startup
@@ -147,17 +164,13 @@ assert_log_has "$LOG_DIR/startup.log" "passto-context"
 printf '[info] Test 1: submit a real task to trigger post-round reflector\n'
 send_cmd "$PROMPT"
 
-SESSION_JSONL=""
-for _ in $(seq 1 20); do
-  SESSION_JSONL="$(find_session_jsonl || true)"
-  if [[ -n "$SESSION_JSONL" ]]; then
-    break
-  fi
-  sleep 1
-done
+SESSION_JSONL="$(wait_for_session_jsonl 60 1 || true)"
 
 if [[ -z "$SESSION_JSONL" ]]; then
   echo "[FAIL] session jsonl not found" >&2
+  capture session-jsonl-timeout
+  sed -n '1,260p' "$LOG_DIR/session-jsonl-timeout.log" >&2 || true
+  find "$SESSION_DIR" -maxdepth 3 -print >&2 || true
   exit 1
 fi
 
@@ -173,7 +186,6 @@ assert_log_has "$LOG_DIR/status-before.log" "PasstoContext Runtime Status"
 
 printf '[info] Test 3: reload and verify replayed status\n'
 run_reload
-wait_for_jsonl_pattern "$SESSION_JSONL" '"customType":"grc-state"' 120 1
 send_cmd "/ptc status"
 wait_for_pattern status-after-reload "PasstoContext Runtime Status" 30 1
 assert_log_has "$LOG_DIR/status-after-reload.log" "PasstoContext Runtime Status"

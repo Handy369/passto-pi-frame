@@ -83,6 +83,11 @@ v1.1 的目标不是维护一套越来越复杂的需求账本，而是把当前
 - 从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复状态
 - 恢复 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`
 - 恢复 `lastAdvice / lastDiagnosis / lastReflectedAgentRound`
+- 从 `references/generator-contract.md` 自动同步 Constitution 投影到 `~/.pi/agent/APPEND_SYSTEM.md`
+
+说明：
+- `buildGeneratorCharterPrompt()` 与 `APPEND_SYSTEM.md` 共享 `generator-contract.md` 作为静态单一维护源
+- 若 `generator-contract.md` 缺失，则本次 `session_start` 会跳过 `APPEND_SYSTEM.md` 自动同步，而不会用 fallback 覆盖全局文件
 
 ### 4.2 before_agent_start
 

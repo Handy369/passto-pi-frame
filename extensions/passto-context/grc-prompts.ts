@@ -5,7 +5,13 @@
 
 import type { GoalStateDocument, ReflectorInput, SummaryEntry } from "./types.ts";
 import { buildGoalViewModel } from "./grc-goal-view.ts";
+import { projectGeneratorCharterPrompt, readGeneratorContract } from "./grc-generator-contract.ts";
 
+let cachedGeneratorCharterPrompt: string | null = null;
+
+/**
+ * @deprecated 已由 buildGeneratorCharterPrompt() 替代；仅保留作历史语义对照，勿再接入新的运行时注入链。
+ */
 export function buildBaseGRCPrompt(): string {
   return [
     "--- PasstoContext 认知增强 ---",
@@ -15,6 +21,13 @@ export function buildBaseGRCPrompt(): string {
     "- 关注假设是否成立",
     "这不是强制格式，只是思维习惯的提醒。",
   ].join("\n");
+}
+
+export function buildGeneratorCharterPrompt(): string {
+  if (cachedGeneratorCharterPrompt) return cachedGeneratorCharterPrompt;
+
+  cachedGeneratorCharterPrompt = projectGeneratorCharterPrompt(readGeneratorContract());
+  return cachedGeneratorCharterPrompt;
 }
 
 export function buildReflectionSteerPrompt(): string {

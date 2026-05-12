@@ -13,6 +13,7 @@ interface PrincipleMetadata {
   lastDecayAt?: string;
   mergeCount?: number;
   conflictGroupId?: string;
+  lifecycle?: "active" | "stale" | "archived" | "disabled";
   // legacy compatibility
   hitCount?: number;
   lastUsed?: string;
@@ -78,6 +79,11 @@ export interface PrinciplesDiagnostics {
     conflictGroups: number;
     conflictedItems: number;
   };
+  review: {
+    staleCandidates: number;
+    pseudoCandidates: number;
+    oversizedCandidates: number;
+  };
 }
 
 export interface PrinciplesManager {
@@ -139,6 +145,11 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
       conflictGroups: 0,
       conflictedItems: 0,
     },
+    review: {
+      staleCandidates: 0,
+      pseudoCandidates: 0,
+      oversizedCandidates: 0,
+    },
   };
 
   function normalizeContent(content: string): string {
@@ -166,6 +177,9 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
       lastDecayAt: typeof metadata?.lastDecayAt === "string" ? metadata.lastDecayAt : undefined,
       mergeCount: typeof metadata?.mergeCount === "number" ? metadata.mergeCount : 0,
       conflictGroupId: typeof metadata?.conflictGroupId === "string" ? metadata.conflictGroupId : undefined,
+      lifecycle: metadata?.lifecycle === "stale" || metadata?.lifecycle === "archived" || metadata?.lifecycle === "disabled"
+        ? metadata.lifecycle
+        : "active",
       // legacy compatibility
       hitCount: hintCount,
       lastUsed: typeof lastHintedAt === "string" ? lastHintedAt : undefined,
@@ -471,6 +485,12 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     return idsToDelete.length;
   }
 
+  function isInjectable(item: IndexedPrinciple): boolean {
+    return item.metadata.lifecycle !== "stale"
+      && item.metadata.lifecycle !== "archived"
+      && item.metadata.lifecycle !== "disabled";
+  }
+
   function compareInjectable(a: IndexedPrinciple, b: IndexedPrinciple): number {
     const activeDiff = (b.metadata.activeScore ?? 0) - (a.metadata.activeScore ?? 0);
     if (activeDiff !== 0) return activeDiff;
@@ -507,28 +527,75 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     return [...withoutGroup, ...winners].sort(compareInjectable);
   }
 
+  function isStaleCandidate(item: IndexedPrinciple): boolean {
+    return /RequirementLedger|standingInstructions|ObjectiveSnapshot/.test(item.content);
+  }
+
+  function isPseudoCandidate(item: IndexedPrinciple): boolean {
+    const addedCount = (item.content.match(/新增：/g) ?? []).length;
+    return addedCount >= 2
+      || /TODO\.md|README|package\.json/.test(item.content)
+      || /同步文档|迁移|回归决策记录/.test(item.content);
+  }
+
+  function isOversizedCandidate(item: IndexedPrinciple): boolean {
+    return item.content.length > 280;
+  }
+
   function refreshHealth(): void {
     const items = Array.from(index.values());
     const active = items.filter((item) => (item.metadata.activeScore ?? item.metadata.hintCount ?? item.metadata.hitCount ?? 0) > 0).length;
+    const injectableItems = items.filter(isInjectable);
     const conflictGroupIds = new Set<string>();
     let conflictedItems = 0;
+    let staleCandidates = 0;
+    let pseudoCandidates = 0;
+    let oversizedCandidates = 0;
     for (const item of items) {
-      if (!item.metadata.conflictGroupId) continue;
-      conflictGroupIds.add(item.metadata.conflictGroupId);
-      conflictedItems += 1;
+      if (item.metadata.conflictGroupId) {
+        conflictGroupIds.add(item.metadata.conflictGroupId);
+        conflictedItems += 1;
+      }
+      if (isStaleCandidate(item)) staleCandidates += 1;
+      if (isPseudoCandidate(item)) pseudoCandidates += 1;
+      if (isOversizedCandidate(item)) oversizedCandidates += 1;
     }
 
     diagnostics.health = {
       total: items.length,
-      injectable: resolveConflictGroups(items).length,
+      injectable: resolveConflictGroups(injectableItems).length,
       active,
       conflictGroups: conflictGroupIds.size,
       conflictedItems,
+    };
+    diagnostics.review = {
+      staleCandidates,
+      pseudoCandidates,
+      oversizedCandidates,
     };
   }
 
   async function writeRegistry(): Promise<void> {
     if (!registryPath) return;
+
+    const existingMetadataById = new Map<string, Record<string, unknown>>();
+    try {
+      const raw = await fs.readFile(registryPath, "utf-8");
+      const parsed = JSON.parse(raw) as Partial<PrinciplesRegistry>;
+      const principles = Array.isArray(parsed.principles) ? parsed.principles : [];
+      for (const item of principles) {
+        if (!item || typeof item !== "object") continue;
+        if (typeof item.id !== "string") continue;
+        const metadata = item.metadata;
+        if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) continue;
+        existingMetadataById.set(item.id, { ...(metadata as Record<string, unknown>) });
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.warn(`Failed to read existing principles registry before write ${registryPath}:`, err);
+      }
+    }
+
     const registry: PrinciplesRegistry = {
       version: REGISTRY_VERSION,
       updatedAt: nowIso(),
@@ -541,6 +608,7 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
           tags: [...item.tags],
           content: item.content,
           metadata: {
+            ...(existingMetadataById.get(item.id) ?? {}),
             source: item.metadata.source,
             sources: [...(item.metadata.sources ?? [])],
             hintCount: item.metadata.hintCount ?? item.metadata.hitCount ?? 0,
@@ -550,6 +618,7 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
             lastDecayAt: item.metadata.lastDecayAt,
             mergeCount: item.metadata.mergeCount ?? 0,
             conflictGroupId: item.metadata.conflictGroupId,
+            lifecycle: item.metadata.lifecycle ?? "active",
             // legacy compatibility
             hitCount: item.metadata.hintCount ?? item.metadata.hitCount ?? 0,
             lastUsed: item.metadata.lastHintedAt ?? item.metadata.lastUsed,
@@ -557,10 +626,13 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
           },
         })),
     };
-    await fs.writeFile(registryPath, JSON.stringify(registry, null, 2), "utf-8");
+
+    const tempPath = `${registryPath}.tmp-${process.pid}-${Date.now()}`;
+    await fs.writeFile(tempPath, JSON.stringify(registry, null, 2), "utf-8");
+    await fs.rename(tempPath, registryPath);
   }
 
-  async function loadRegistryFile(): Promise<void> {
+  async function loadRegistryFile(): Promise<boolean> {
     try {
       const raw = await fs.readFile(registryPath, "utf-8");
       const parsed = JSON.parse(raw) as Partial<PrinciplesRegistry>;
@@ -588,10 +660,12 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
         };
         index.set(publicItem.id, asIndexed(publicItem));
       }
+      return items.length > 0;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
         logger.warn(`Failed to read principles registry ${registryPath}:`, err);
       }
+      return false;
     }
   }
 
@@ -750,8 +824,8 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
       diagnostics.migration.migratedYamlFiles = 0;
       diagnostics.migration.legacyYamlFilesDetected = 0;
       await fs.mkdir(currentDir, { recursive: true });
-      await loadRegistryFile();
-      const migratedYaml = await loadLegacyYamlFiles();
+      const hasRegistryData = await loadRegistryFile();
+      const migratedYaml = hasRegistryData ? false : await loadLegacyYamlFiles();
       const shouldRewriteRegistry = migratedYaml
         || diagnostics.migration.normalizedRegistryItems > 0
         || ((diagnostics.migration.loadedRegistryVersion ?? REGISTRY_VERSION) < REGISTRY_VERSION);
@@ -775,7 +849,7 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
 
       const queryTokens = extractKeywords(trimmed);
       const scored: IndexedPrinciple[] = [];
-      for (const item of resolveConflictGroups(Array.from(index.values()))) {
+      for (const item of resolveConflictGroups(Array.from(index.values()).filter(isInjectable))) {
         const score = scorePrinciple(item, trimmed, queryTokens);
         if (score <= 0) continue;
         scored.push({ ...item, score });
@@ -788,7 +862,7 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     },
 
     listInjectable(limit: number): PrincipleItem[] {
-      return resolveConflictGroups(Array.from(index.values()))
+      return resolveConflictGroups(Array.from(index.values()).filter(isInjectable))
         .slice(0, Math.max(0, limit))
         .map(toPublicItem);
     },
@@ -856,7 +930,10 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
 export function formatPrinciplesForInjection(principles: PrincipleItem[]): string {
   if (principles.length === 0) return "";
 
-  const lines = ["--- 经验原则（来自历史会话）---"];
+  const lines = [
+    "--- 经验原则（来自历史会话）---",
+    "以下为历史经验启发，仅在不与当前目标、当前用户要求、当前代码事实冲突时参考。",
+  ];
   for (const principle of principles) {
     lines.push(`- ${principle.content}`);
   }

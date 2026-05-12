@@ -32,6 +32,9 @@
 - 主调度已切到 **agent-round / post-round**：`agent_end` 后后台启动 Reflector；Curator 在 `before_agent_start` 处理上一轮
 - `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles
 - `agent_start` 会写入 `passto-round-boundary`；`session_start` 会从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复运行态与 GRC 轻事实态（含显式校验与 replay）
+- `references/generator-contract.md` 现为静态单一维护源：`buildGeneratorCharterPrompt()` 从中投影 Generator Charter；`session_start` 会自动把 Constitution 投影同步到 `~/.pi/agent/APPEND_SYSTEM.md`
+- 自动同步带有安全边界：若 `generator-contract.md` 缺失，则跳过同步，而不会使用 fallback 覆写全局 `APPEND_SYSTEM.md`
+- 可用 `npm run check:append-system` 手动校验当前 `APPEND_SYSTEM.md` 是否与投影结果一致
 - 支持顶层 `runtimeMode = on | off` 运行态开关，可通过 `/ptc on|off` 切换
 - 长运行单次任务中，当当前 run 内的 `turn-round` 达到 `midRunTurnThreshold` 时，会触发一次 mid-run Reflector，并持久化 `grc-mid-run-debug`
 - Reflector / Curator 通过后台 `complete()` 异步运行，不阻塞主对话
@@ -118,7 +121,7 @@ ln -sf "$SRC/package.json"     ./package.json
 
 ## 命令
 
-PasstoContext 现在只保留 4 个公开命令：
+PasstoContext 当前公开命令面包括基础运行态命令，以及 principles review 的 export/import 命令：
 
 ### `/ptc` / `/ptc status` — 显示总状态
 
@@ -164,6 +167,34 @@ Widget 会保留极简关闭态提示：`PTC:off`。
 ```
 
 直接调用系统能力打开配置文件，无需用户手动查找路径。
+
+### `/ptc principles review export` — 导出 principles review bundle
+
+```
+/ptc principles review export
+/ptc principles review export <output-dir>
+```
+
+从当前 `principles-registry.json` 生成审查 bundle，输出：
+- `review-model.json`
+- `review.html`
+
+默认输出目录：
+
+```
+~/.passtocontext/memory/principles/reviews/<timestamp>/
+```
+
+### `/ptc principles review import <file>` — 导入 review decision
+
+```
+/ptc principles review import <decision-file>
+```
+
+读取并校验 `review-decision.json`：
+- 校验 `registrySnapshotHash` 是否与当前 registry 一致
+- 校验 decision 中的 principle id 是否全部存在
+- 通过后仅写回 `metadata.lifecycle` 与 `updated`
 
 ## 配置
 
@@ -422,6 +453,7 @@ before_agent_start
   - context manager 的 previous-round 切片
   - compaction 的 curator-only 接管
   - `/ptc status` 的收敛口径
+  - `principles review` 的 model / HTML / import / command wiring
   - round-state 更新与恢复
 - `npm run test:tmux` 已聚合真实 Pi / tmux 集成回归：
   - `test:tui`
@@ -450,11 +482,11 @@ before_agent_start
 - `npm run test:grc`
   - 快速 Node 回归链，不依赖 tmux
 - `npm run test:tmux`
-  - 真实 Pi / tmux 集成回归聚合链：`test:tui + test:midrun + test:reflector-replay`
+  - 真实 Pi / tmux 集成回归聚合链：`test:tui + test:principles-review + test:midrun + test:reflector-replay`
 - `npm run test:regression`
   - 当前主回归链：`test:grc + test:tmux`
 
-项目提供三类真实 Pi TUI 回归脚本：
+项目提供四类真实 Pi TUI 回归脚本：
 
 ### 基础 TUI 回归
 
@@ -480,6 +512,28 @@ npm run test:tui
 - `/new` 后会创建新 session，且 `runtimeMode` / `mode` 重置
 - `/resume` 对话框在真实 TUI 中可正常打开；由于 All 视图会混入全局历史 session，自动选择正确旧 session 目前不作为稳定脚本断言
 - 持久化的 `running` 状态不会在 reload 后错误保留
+
+### Principles review 回归
+
+当修改 `/ptc principles review export`、`/ptc principles review import`、`review-model.json` / `review.html` 生成逻辑、或 decision import 生命周期映射时，运行：
+
+```bash
+npm run test:principles-review
+```
+
+或直接运行：
+
+```bash
+./scripts/principles-review-regression.sh
+```
+
+该脚本基于 `tmux` 驱动真实 Pi 会话，并验证：
+
+- `/ptc principles review export` 会在默认目录落盘 `review-model.json` 与 `review.html`
+- `/ptc principles review export <output-dir>` 会在显式目录落盘 bundle
+- export 产物中的 snapshot 可被后续 decision import 接受
+- `/ptc principles review import <file>` 会输出 summary
+- import 后 registry lifecycle 会真实变为 `active / stale / archived / disabled`
 
 ### Mid-run Reflector 回归
 
@@ -519,13 +573,13 @@ npm run test:reflector-replay
 ./scripts/reflector-replay-regression.sh
 ```
 
-该脚本基于 `tmux` 驱动真实 Pi 会话，并以 session jsonl 作为主证据，验证：
+该脚本基于 `tmux` 驱动真实 Pi 会话，并以 session jsonl + reload 后的 `/ptc status` 作为主证据，验证：
 
 - post-round Reflector 会落盘 `grc-reflector-artifact`
 - `/ptc status` 在 reload 前后都能显示 `Latest Reflector Diagnosis`
 - 最新 artifact 的 `agentRound` 与 `/ptc status` 的 `Last reflected round` 一致
-- 最新 `grc-state.reflector.processedUpToAgentRound` 与 `lastReflectedAgentRound` 都对齐到最新 artifact round
-- replay 只恢复 latest 轻状态视图，不依赖人工目测 pane 文本
+- 最新持久化 `grc-state.reflector.processedUpToAgentRound` 与 `lastReflectedAgentRound` 都对齐到最新 artifact round
+- replay 只恢复 latest 轻状态视图，不依赖人工目测 pane 文本，也不要求 reload 后额外新增一条 `grc-state` entry
 
 ## 最小手工验证方案（tmux）
 
@@ -641,6 +695,7 @@ passto-context/
 ├── tests/                    # Node 回归测试
 ├── scripts/
 │   ├── tui-regression.sh              # 真实 Pi TUI 回归脚本（tmux 驱动）
+│   ├── principles-review-regression.sh# principles review export/import 回归脚本
 │   ├── midrun-regression.sh           # mid-run Reflector 回归脚本
 │   └── reflector-replay-regression.sh # Reflector replay / reload 回归脚本
 └── package.json              # 包清单 / 测试命令

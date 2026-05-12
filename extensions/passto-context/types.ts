@@ -358,6 +358,7 @@ export interface PrincipleItem {
     lastDecayAt?: string;
     mergeCount?: number;
     conflictGroupId?: string;
+    lifecycle?: "active" | "stale" | "archived" | "disabled";
     // legacy compatibility
     hitCount?: number;
     lastUsed?: string;
