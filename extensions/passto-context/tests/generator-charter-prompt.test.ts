@@ -15,7 +15,8 @@ test('buildGeneratorCharterPrompt explains dynamic-layer semantics without repea
   assert.match(prompt, /GoalState：当前目标链锚点与焦点真相源/);
   assert.match(prompt, /SummaryCache：近期事实压缩索引/);
   assert.match(prompt, /Reflector Advice：post-round 纠偏建议/);
-  assert.match(prompt, /Principles：跨多轮、多任务复现过的历史经验启发/);
+  assert.match(prompt, /Principles：分为两层：`manual \+ promoted` 的人工宪法原则，以及其余跨多轮、多任务复现过的历史经验启发/);
+  assert.match(prompt, /人工宪法原则优先于普通历史经验层/);
   assert.match(prompt, /理清真实需求/);
   assert.match(prompt, /考虑替代方案/);
   assert.match(prompt, /检查关键假设/);
@@ -39,7 +40,8 @@ test('projectGeneratorCharterPrompt falls back to built-in charter when contract
   assert.match(prompt, /GoalState 是当前目标链锚点/);
   assert.match(prompt, /SummaryCache 是近期事实索引/);
   assert.match(prompt, /Reflector advice 是纠偏建议/);
-  assert.match(prompt, /principles 是历史经验启发/);
+  assert.match(prompt, /principles 分两层：manual \+ promoted 为人工宪法原则，其余为历史经验启发/);
+  assert.match(prompt, /人工宪法原则优先于普通历史经验层/);
   assert.match(prompt, /理清真正的需求/);
   assert.match(prompt, /考虑替代方案/);
   assert.match(prompt, /检查关键假设/);

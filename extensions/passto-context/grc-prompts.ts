@@ -3,9 +3,23 @@
  * Prompt builders for Generator / Reflector / Curator
  */
 
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { GoalStateDocument, ReflectorInput, SummaryEntry } from "./types.ts";
 import { buildGoalViewModel } from "./grc-goal-view.ts";
 import { projectGeneratorCharterPrompt, readGeneratorContract } from "./grc-generator-contract.ts";
+
+export const REFLECTOR_CONTRACT_PATH = path.resolve(import.meta.dirname, "references/reflector-contract.md");
+
+function readReflectorGuidance(): string {
+  try {
+    const content = fs.readFileSync(REFLECTOR_CONTRACT_PATH, "utf-8");
+    const match = content.match(/^## Principle Generation Guidance\n([\s\S]*?)(?=^## |\Z)/m);
+    return match?.[1]?.trim() ?? "";
+  } catch {
+    return "";
+  }
+}
 
 let cachedGeneratorCharterPrompt: string | null = null;
 
@@ -47,8 +61,10 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     goalContext = null,
     summaryCacheExcerpt = [],
     recentCuratorArtifacts = [],
-    candidatePrinciples = [],
+    allPrinciples = [],
   } = input;
+
+  const guidance = readReflectorGuidance();
 
   return [
     "# 角色",
@@ -63,12 +79,20 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     "3. 当前焦点目标视图 goalContext（可能为空）。",
     "4. 最近的 summaryCacheExcerpt（可能为空）。",
     "5. 最近的 recentCuratorArtifacts（可能为空）。",
-    "6. 与当前 round 最相关的 candidatePrinciples（可能为空）。",
+    "6. 当前完整原则库 allPrinciples（可能为空）。",
     "",
     "# 核心任务",
     "你必须优先相对 currentGoalState / goalContext 判断当前执行是否仍服务于当前目标链，而不是只基于对话表面做评论。",
-    "summaryCacheExcerpt / recentCuratorArtifacts / candidatePrinciples 只是 grounding 辅助，不得替代当前目标基线。",
-    "当输出 principleOps 时，必须优先参考 candidatePrinciples，避免脱离现有原则库盲目 create / merge / conflict。",
+    "summaryCacheExcerpt / recentCuratorArtifacts / allPrinciples 只是 grounding 辅助，不得替代当前目标基线。",
+    "当输出 principleOps 时，必须先逐条对照 allPrinciples，判断当前经验是否已经被旧原则覆盖；只有在充分比较后，才能在 hit / expand / create 三个方向中三选一。",
+    "若已有原则已能表达当前经验，则输出 hit；若命中旧原则但需要更完整表达，则输出 expand；只有现有原则库确实无法覆盖时，才允许输出 create。",
+    "禁止在未充分排除旧原则前盲目 create；否则原则会持续发散增长，最终让命中机制失效。",
+    "在输出 principleOps 前，必须先判断经验作用域：global / domain / local。只有 global 经验才允许进入 principles；domain 经验如有复用价值，优先输出 assetCandidates(reference/script)；local 经验只能留在 advice，不得产出 principleOps。",
+    "global 的判定标准必须同时满足：① 不依赖特定产品/仓库/工作台语境；② 不依赖特定框架、组件、目录、API、协议名、事件名或对象名；③ 换到别的任务/代码库后仍成立；④ 表达的是长期可复用的决策约束，而不是单次实现教训。任一条件不满足，就不要输出 principleOps。",
+    "凡是明显依赖特定框架、组件、工作台、benchmark harness、目录路径、宿主环境、场景对象名、特定 API/事件名的经验，默认先判为 domain 或 local，而不是 global。若某观察必须借助这些专有名词才能成立，也不得进入 principles。",
+    "一条原则只能表达一个主断言。expand 只适用于补充旧原则的适用边界、触发条件或更清晰表述；若新观察引入第二个独立约束、另一个子系统实现要求，或需要用“新增/补充”追加不同主题，则不得 expand 到原原则尾部。",
+    "atomic 的判定标准是：去掉任何从句后，原则仍只回答一个问题；若一句话里同时在规定两个以上动作、两个以上判断标准、或两个不共享因果链的约束，则它不是 atomic。遇到这种情况，应改为 hit 旧原则、输出 assetCandidates，或直接不产出 principleOps。",
+    "默认从严：若你不能同时证明 global + atomic，就输出空的 principleOps。宁可漏提，也不要把局部经验抬升为全局原则。",
     "如果发现偏移，必须尽量归因为以下类型之一：",
     "- none",
     "- goal_state_drift",
@@ -114,10 +138,9 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     "    \"explanation\": \"...\"",
     "  },",
     "  \"principleOps\": [",
-    "    { \"op\": \"create\", \"content\": \"...\", \"tags\": [\"...\"] },",
-    "    { \"op\": \"reuse\", \"targetId\": \"principle_xxx\" },",
-    "    { \"op\": \"merge\", \"targetId\": \"principle_xxx\", \"content\": \"...\", \"tags\": [\"...\"] },",
-    "    { \"op\": \"conflict\", \"targetId\": \"principle_xxx\", \"content\": \"...\", \"tags\": [\"...\"] }",
+    "    { \"op\": \"hit\", \"targetId\": \"principle_xxx\" },",
+    "    { \"op\": \"expand\", \"targetId\": \"principle_xxx\", \"content\": \"...\", \"tags\": [\"...\"] },",
+    "    { \"op\": \"create\", \"content\": \"...\", \"tags\": [\"...\"] }",
     "  ],",
     "  \"assetCandidates\": [",
     "    { \"type\": \"reference\", \"title\": \"...\", \"rationale\": \"...\", \"evidence\": [\"...\"], \"targetPath\": \"references/...\", \"scope\": \"shared\", \"notes\": \"...\" }",
@@ -126,9 +149,19 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     "```",
     "如果没有值得沉淀或更新的原则或模式候选，则输出 {\"diagnosis\": {...}, \"principleOps\":[], \"assetCandidates\":[]}。",
     "principleOps 必须来自本轮真实执行经验，并与当前目标链相关，而不是空洞常识。",
+    "principleOps 仅允许 hit / expand / create 三种操作；优先 hit，其次 expand，最后才是 create。",
+    "principleOps 默认应为空；只有在证据足以支持 global + atomic 时才填写。单轮局部 bugfix、单个文件教训、单次试验结论，默认不足以 create/expand。",
+    "若经验带有明显领域依赖但又具复用价值，应输出到 assetCandidates，而不是 principleOps。",
+    "expand 的 content 必须是重写后的完整原则文本，而不是在旧原则后补“新增/补充/延伸”。create 的 content 不得包含具体文件路径、目录名、接口名、组件名、工作台名、benchmark 名、产品名或场景专名。",
     "assetCandidates 最多 3 条；type 仅允许 reference / script。每条必须包含 type / title / rationale / evidence，且只表达候选，不得包含自动执行语义。",
     "diagnosis 必须与正文判断一致；若把握不足，可以降低 confidence，但不要编造证据。",
     "",
+    ...(guidance ? [
+      "# 原则生成方法论",
+      "以下是根据历史原则治理经验提炼的方法论，在输出 principleOps 时请优先参考：",
+      guidance,
+      "",
+    ] : []),
     "# 约束",
     "- 总输出不超过 600 字",
     "- 不要复述整段对话",
@@ -136,6 +169,9 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     "- 不要为了凑结构而编造问题、风险或建议",
     "- 若 currentGoalState / goalContext 为空，可退化为基于对话判断，但不要假装知道不存在的目标基线",
     "- Reflector 不能替代 GoalState，也不能直接做状态裁决",
+    "- 以下通常不是 global principle：单个文件/单次 bugfix 的实现教训、特定 benchmark 规则、特定工作台 API 语义、特定组件交互细节、特定目录部署步骤、特定编码链路或 dev-server middleware 细节",
+    "- 若某条候选原则含有专有名词、路径、接口名、事件名、框架名、组件名、产品名，先假定它不是 global，除非你能明确论证这些词只是例子而非成立前提",
+    "- 若某条候选原则里出现“以及/同时/并且/新增/补充/延伸”等连接多个独立约束的迹象，先假定它不是 atomic",
     "- 宁可明确写\"无\"或降低 confidence，也不要写空洞正确话术",
     "",
     "<current_goal_state>",
@@ -154,9 +190,9 @@ export function buildReflectorSubagentPrompt(input: ReflectorInput): string {
     recentCuratorArtifacts.length > 0 ? JSON.stringify(recentCuratorArtifacts, null, 2) : "[]",
     "</recent_curator_artifacts>",
     "",
-    "<candidate_principles>",
-    candidatePrinciples.length > 0 ? JSON.stringify(candidatePrinciples, null, 2) : "[]",
-    "</candidate_principles>",
+    "<all_principles>",
+    allPrinciples.length > 0 ? JSON.stringify(allPrinciples, null, 2) : "[]",
+    "</all_principles>",
     "",
     "<conversation>",
     currentRoundConversation,
@@ -336,6 +372,18 @@ export function buildSummaryCacheInjection(
   }
   lines.push("--- 摘要缓存结束 ---");
   return lines.join("\n");
+}
+
+export function buildSessionSummarySearchGuidance(hasWarehouseEntries: boolean): string {
+  if (!hasWarehouseEntries) return "";
+
+  return [
+    "--- 当前会话历史摘要检索 ---",
+    "- SummaryCache 只包含近期窗口。",
+    "- 如果需要回忆已被压缩出上下文的当前会话历史，可调用工具 `ptc_search_summary` 搜索当前 session 的 Summary 仓库。",
+    "- 查询词优先使用：目标、文件路径、关键决策、报错词、blocker。",
+    "--- 历史摘要检索结束 ---",
+  ].join("\n");
 }
 
 export function buildGoalStateInjection(goalState: GoalStateDocument, maxActiveItems = 5): string {

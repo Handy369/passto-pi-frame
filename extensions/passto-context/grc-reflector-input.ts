@@ -1,4 +1,6 @@
-import type { CuratorArtifactEntry, PrincipleItem, ReflectorGoalContext, ReflectorInput, SummaryEntry } from './types.ts';
+import type { CuratorArtifactEntry, SlimPrincipleItem, ReflectorGoalContext, ReflectorInput, SummaryEntry } from './types.ts';
+
+const REFLECTOR_PRINCIPLES_LIMIT = 50;
 
 export interface ReflectorInputAssemblyOptions {
   currentRoundConversation: string;
@@ -7,17 +9,14 @@ export interface ReflectorInputAssemblyOptions {
   summaryCache?: SummaryEntry[];
   branchEntries?: Array<{ type?: string; customType?: string; data?: unknown } | null | undefined>;
   principlesManager?: {
-    search(query: string, limit: number): PrincipleItem[];
+    listSlim(limit: number): SlimPrincipleItem[];
   } | null;
-  principleQuery?: string;
   summaryCacheLimit?: number;
   curatorArtifactsLimit?: number;
-  candidatePrinciplesLimit?: number;
 }
 
 const DEFAULT_SUMMARY_CACHE_LIMIT = 4;
 const DEFAULT_CURATOR_ARTIFACTS_LIMIT = 3;
-const DEFAULT_CANDIDATE_PRINCIPLES_LIMIT = 5;
 
 export function buildReflectorInput(options: ReflectorInputAssemblyOptions): ReflectorInput {
   const summaryCacheExcerpt = buildSummaryCacheExcerpt(
@@ -28,11 +27,7 @@ export function buildReflectorInput(options: ReflectorInputAssemblyOptions): Ref
     options.branchEntries ?? [],
     options.curatorArtifactsLimit ?? DEFAULT_CURATOR_ARTIFACTS_LIMIT,
   );
-  const candidatePrinciples = buildCandidatePrinciples(
-    options.principlesManager ?? null,
-    options.principleQuery ?? '',
-    options.candidatePrinciplesLimit ?? DEFAULT_CANDIDATE_PRINCIPLES_LIMIT,
-  );
+  const allPrinciples = buildAllPrinciples(options.principlesManager ?? null, REFLECTOR_PRINCIPLES_LIMIT);
 
   return {
     currentRoundConversation: options.currentRoundConversation,
@@ -40,7 +35,7 @@ export function buildReflectorInput(options: ReflectorInputAssemblyOptions): Ref
     goalContext: options.goalContext ?? null,
     summaryCacheExcerpt,
     recentCuratorArtifacts,
-    candidatePrinciples,
+    allPrinciples,
   };
 }
 
@@ -66,13 +61,12 @@ export function extractRecentCuratorArtifacts(
   return parsed.slice(-limit);
 }
 
-export function buildCandidatePrinciples(
-  principlesManager: { search(query: string, limit: number): PrincipleItem[] } | null,
-  query: string,
-  limit: number,
-): PrincipleItem[] {
-  if (!principlesManager || !query.trim() || limit <= 0) return [];
-  return principlesManager.search(query, limit);
+export function buildAllPrinciples(
+  principlesManager: { listSlim(limit: number): SlimPrincipleItem[] } | null,
+  limit = 50,
+): SlimPrincipleItem[] {
+  if (!principlesManager) return [];
+  return principlesManager.listSlim(limit);
 }
 
 function parseCuratorArtifactEntry(raw: unknown): CuratorArtifactEntry | null {

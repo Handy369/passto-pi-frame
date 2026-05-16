@@ -32,6 +32,8 @@ test('buildPrinciplesReviewModel exports summary, snapshot hash, and review reco
             tags: ['quality'],
             content: '修改文件后必须验证结果。',
             metadata: {
+              origin: 'manual',
+              promoted: true,
               activeScore: 10,
               hintCount: 10,
               hintTimestamps: ['2026-05-12T11:00:00.000Z'],
@@ -126,7 +128,7 @@ test('buildPrinciplesReviewModel exports summary, snapshot hash, and review reco
 
     assert.deepEqual(model.summary, {
       total: 6,
-      injectable: 4,
+      injectable: 1,
       active: 4,
       stale: 0,
       archived: 1,
@@ -145,6 +147,8 @@ test('buildPrinciplesReviewModel exports summary, snapshot hash, and review reco
 
     assert.equal(itemsById.get('principle_active')?.review.recommendedAction, 'keep-active');
     assert.deepEqual(itemsById.get('principle_active')?.review.reasons, []);
+    assert.equal(itemsById.get('principle_active')?.metadata.origin, 'manual');
+    assert.equal(itemsById.get('principle_active')?.metadata.promoted, true);
 
     assert.equal(itemsById.get('principle_stale_candidate')?.review.recommendedAction, 'mark-stale');
     assert.deepEqual(itemsById.get('principle_stale_candidate')?.review.reasons, ['stale-candidate']);

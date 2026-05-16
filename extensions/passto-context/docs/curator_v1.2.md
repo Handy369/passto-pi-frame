@@ -1,20 +1,12 @@
-# PasstoContext v1.1 核心设计文档：GoalStateDocument + Summary 分层记忆 + Curator
+# PasstoContext Curator 模块设计
 
-> ⚠️ 归档提示：当前实现请**优先参考** `docs/v1.1/V1_1_FINAL_ARCHITECTURE.md`。
-> 本文档保留为 Curator / GoalState 设计背景与细节说明，不再单独作为当前代码实现依据。
->
-> 状态：核心设计草案
-> 目标：将 v1.1 收敛为**一个核心设计文档**，统一说明：
-> - `GoalStateDocument` 的定位、设计哲学与工程化结构
-> - `SummaryEntry -> SummaryCache -> Summary 仓库检索` 的层级分工
-> - `Curator` 作为异步 LLM subagent 在 `before_agent_start` 的执行方式与输出契约
-> - 明确删除 `RequirementLedger` 与 `ObjectiveSnapshot`
+> 版本：v1.2 | 状态：current | 更新：2026-05-14
 
 ---
 
 ## 1. 收敛结论
 
-v1.1 应收敛为四块核心结构：
+Curator 模块收敛为四块核心结构：
 
 1. `GoalStateDocument`
 2. `SummaryEntry`
@@ -26,18 +18,18 @@ v1.1 应收敛为四块核心结构：
 - `RequirementLedger`
 - `ObjectiveSnapshot`
 
-原因不是“代码可以更少”，而是**设计哲学必须单核化**：
+原因不是"代码可以更少"，而是**设计哲学必须单核化**：
 
-- `GoalStateDocument` 负责“当前目标状态”
-- `SummaryEntry / SummaryCache / Summary 仓库` 负责“历史事实索引与现场还原”
+- `GoalStateDocument` 负责"当前目标状态"
+- `SummaryEntry / SummaryCache / Summary 仓库` 负责"历史事实索引与现场还原"
 
-两者分工明确，不再维护第二套“当前目标真相源”。
+两者分工明确，不再维护第二套"当前目标真相源"。
 
 ---
 
 ## 2. 底层设计哲学
 
-### 2.1 不是“保留什么”，而是“可以遗忘什么”
+### 2.1 不是"保留什么"，而是"可以遗忘什么"
 
 本设计的核心不是传统摘要系统的：
 
@@ -47,8 +39,8 @@ v1.1 应收敛为四块核心结构：
 
 而是：
 
-# 用户下一条回复，是对上一轮目标断言的定性信号。
-# 这个信号决定：上一轮哪些信息仍值得保留在工作记忆中，哪些可以退出上下文。
+> 用户下一条回复，是对上一轮目标断言的定性信号。
+> 这个信号决定：上一轮哪些信息仍值得保留在工作记忆中，哪些可以退出上下文。
 
 因此系统优先回答的问题是：
 
@@ -86,7 +78,7 @@ v1.1 应收敛为四块核心结构：
 - 用下一条用户反馈裁决上一轮哪些目标信息应保留
 - 主动剪掉非必要过程
 
-而 `SummaryEntry` 的职责不同，它不是“当前目标状态”，而是：
+而 `SummaryEntry` 的职责不同，它不是"当前目标状态"，而是：
 
 - 记录客观事实
 - 为未来回溯提供线索
@@ -101,42 +93,14 @@ v1.1 应收敛为四块核心结构：
 
 ---
 
-## 3. 为什么删除 RequirementLedger 与 ObjectiveSnapshot
+## 3. RequirementLedger 与 ObjectiveSnapshot 状态
 
-### 3.1 删除 RequirementLedger
-
-删除原因：
-
-- 它把系统拉回“需求工程账本”的思路
-- 与“只关注目标断言与遗忘”的哲学不一致
-- 约束/偏好/非目标/问题/成功标准并不天然服务于“目标识别、定性、演化、迁移”
-- 它会形成第二个当前真相源，弱化 `GoalStateDocument`
-
-更关键的是：
-
-> 如果某些约束/偏好真的重要，它们通常会体现在现存客观产物中；若需要回溯，则应通过 Summary 仓库返回现场，而不是常驻一个 ledger。
+- `RequirementLedger`：已从主路径退出，不再维护。
+- `ObjectiveSnapshot`：已从主路径退出，不再维护；若需要"目标锚点注入"，应通过 `renderGoalAnchor(goalState)` 从 `GoalStateDocument` 渲染得到。
 
 ---
 
-### 3.2 删除 ObjectiveSnapshot
-
-删除原因：
-
-- 它本质上只是“当前目标锚点视图”
-- 这一职责可直接从 `GoalStateDocument` 渲染得到
-- 作为独立状态对象会与 `GoalStateDocument` 重复
-
-所以如果系统仍然需要“目标锚点注入”，应实现为：
-
-```ts
-renderGoalAnchor(goalState)
-```
-
-而不是保留独立持久化的 `ObjectiveSnapshot`。
-
----
-
-## 4. v1.1 的三层记忆定位
+## 4. 三层记忆定位
 
 ### 4.1 GoalStateDocument：当前目标态
 
@@ -164,8 +128,6 @@ renderGoalAnchor(goalState)
 
 > 如果以后需要还原这段历史，去哪里找？
 
-> 注意：v1.1 **先不改变当前 SummaryEntry 结构定位**。它的价值就是“还原现场、记录客观事实、保留索引”。
-
 ---
 
 ### 4.3 SummaryCache：近期 15 条演进窗口
@@ -173,7 +135,7 @@ renderGoalAnchor(goalState)
 职责：
 - 保存最近 15 条 `SummaryEntry`
 - 为模型提供近期目标演进轨迹
-- 让模型理解“最近几轮发生了什么变化”，而不必重读全部历史
+- 让模型理解"最近几轮发生了什么变化"，而不必重读全部历史
 
 它回答的是：
 
@@ -217,9 +179,7 @@ renderGoalAnchor(goalState)
 
 ## 6. 关键问题：目标不是平铺列表，而是递归层级树
 
-当前目标往往不是单一线性任务，而是层级化的。
-
-例如当前对话中：
+当前目标往往不是单一线性任务，而是层级化的。例如：
 
 ```text
 v1.1 主目标
@@ -240,7 +200,7 @@ v1.1 主目标
 
 ---
 
-## 7. 工程化方案：采用“归一化目标树结构”
+## 7. 工程化方案：归一化目标树结构
 
 ### 7.1 为什么不用深层嵌套 children
 
@@ -254,9 +214,7 @@ v1.1 主目标
 - 恢复树视图时不灵活
 - 一个节点迁移 parent 时需要重写大块结构
 
-因此 v1.1 建议采用：
-
-# 归一化树结构（normalized tree）
+因此建议采用**归一化树结构（normalized tree）**。
 
 ---
 
@@ -460,7 +418,7 @@ I-P-O-E 不进入 `GoalStateDocument` 持久化结构。
 
 ---
 
-## 10. SummaryEntry -> SummaryCache -> Summary 仓库 的完整作用链
+## 10. SummaryEntry -> SummaryCache -> Summary 仓库的完整作用链
 
 ### 10.1 SummaryEntry
 
@@ -471,7 +429,7 @@ I-P-O-E 不进入 `GoalStateDocument` 持久化结构。
 
 `SummaryEntry` 记录上一轮的客观事实与现场指针。
 
-推荐沿用当前结构：
+推荐结构：
 
 ```ts
 interface SummaryEntry {
@@ -528,11 +486,9 @@ interface SummaryEntry {
 - 供 LLM 通过工具主动搜索
 - 搜到后再根据 `sessionPointers` 精准回到真实现场
 
-所以这里特别强调：
+## 是 Summary 仓库，不是"自动注入型记忆库"
 
-## 是 Summary 仓库，不是“自动注入型记忆库”
-
-它的职责是“线索”和“回溯入口”，不是持续向 prompt 塞越来越多历史内容。
+它的职责是"线索"和"回溯入口"，不是持续向 prompt 塞越来越多历史内容。
 
 ---
 
@@ -576,7 +532,7 @@ interface CuratorResult {
 
 ---
 
-## 12. Curator 更新 GoalState 的基本规则
+## 12. GoalState 更新规则
 
 ### 12.1 新增目标
 
@@ -600,7 +556,7 @@ interface CuratorResult {
 
 ### 12.3 修正目标
 
-当用户说“不对、改成、不是这个方向”：
+当用户说"不对、改成、不是这个方向"：
 
 - 旧节点保留必要骨架
 - 创建或更新更准确的新节点
@@ -652,7 +608,7 @@ interface CuratorResult {
 
 ---
 
-### 13.1 注入重点不是整棵树，而是“焦点路径”
+### 13.1 注入重点不是整棵树，而是"焦点路径"
 
 虽然持久化层保存的是完整归一化树，但实际注入给 LLM 时，不必序列化整棵树的全部细节。
 
@@ -663,9 +619,9 @@ interface CuratorResult {
 - 同层活跃兄弟目标（少量）
 - 最近的 migration 摘要
 
-这样能减少 token，同时保持“我现在在哪条目标链上”的清晰感。
+这样能减少 token，同时保持"我现在在哪条目标链上"的清晰感。
 
-这份“焦点路径视图”不仅用于主 Agent 的 context 注入，也应复用于 Reflector 的输入构造。
+这份"焦点路径视图"不仅用于主 Agent 的 context 注入，也应复用于 Reflector 的输入构造。
 
 原因：
 
@@ -673,7 +629,7 @@ interface CuratorResult {
 - Reflector 的 `盲点 / 风险 / 建议` 需要知道当前轮正在服务哪条目标链
 - Reflector 的 `principleOps` 应来自围绕目标完成执行后的经验，而不是脱离目标的对话评论
 
-因此，v1.1 推荐从 `GoalStateDocument` 渲染一个轻量 `ReflectorGoalContext`，而不是把整棵树完整塞给 Reflector。
+因此，推荐从 `GoalStateDocument` 渲染一个轻量 `ReflectorGoalContext`，而不是把整棵树完整塞给 Reflector。
 
 ---
 
@@ -708,6 +664,8 @@ interface ReflectorInput {
   goalContext?: ReflectorGoalContext | null;
 }
 ```
+
+---
 
 ### 13.3 示例序列化
 
@@ -775,75 +733,9 @@ Reflector Async LLM Subagent
 
 ---
 
-## 15. 现有实现的删除 / 保留 / 替代
+## 15. 风险与约束
 
-### 15.1 删除
-
-- `RequirementLedger`
-- `RequirementLedgerEntry`
-- `buildObjectiveSnapshotFromLedger()`
-- `lastRequirementLedger`
-- `lastObjectiveSnapshot`
-- 与 ledger / snapshot 绑定的持久化链
-
----
-
-### 15.2 保留
-
-- `GoalStateDocument`
-- `SummaryEntry`
-- `SummaryCache`
-- `grc-curator-artifact`
-- `passto-round-boundary`
-- Summary 仓库检索工具链
-
----
-
-### 15.3 替代
-
-- `ObjectiveSnapshot` → `renderGoalAnchor(goalState)`
-- “历史记忆注入” → `SummaryCache + Summary 仓库按需检索`
-
----
-
-## 16. 实施路径
-
-### Phase 1：统一类型与文档语义
-
-- 定稿 `GoalStateDocument` 归一化树结构
-- 明确 `SummaryEntry / SummaryCache / Summary 仓库` 的职责边界
-- 删除设计文档中的 `RequirementLedger / ObjectiveSnapshot` 主路径
-
-### Phase 2：Curator 输出契约改造
-
-- `CuratorResult.summaryEntry`
-- `CuratorResult.goalState`
-- `CuratorResult.signal`
-
-### Phase 3：状态与缓存基础设施
-
-- `summary-cache.ts`
-- Summary 仓库存储与检索工具
-- `grc-state.ts` 持久化 `lastGoalState`
-- 移除 Curator 运行间隔配置
-- 本地运行时仅保留 Curator subagent 的 prompt 构造、调用与结果校验逻辑
-
-### Phase 4：context 注入改造
-
-- 从 `GoalStateDocument` 渲染焦点路径
-- 注入 `SummaryCache`
-- messages 中保留最近 3 轮原始对话
-
-### Phase 5：删除旧结构
-
-- 清理 ledger / snapshot 类型、状态、构建函数、注入链路
-- 清理相关文档与 TODO 引用
-
----
-
-## 17. 风险与约束
-
-### 风险 1：GoalStateDocument 重新膨胀为“大而全对象”
+### 风险 1：GoalStateDocument 重新膨胀为"大而全对象"
 
 缓解：
 - 明确禁止把它变成 PRD / requirement 容器
@@ -870,9 +762,9 @@ Reflector Async LLM Subagent
 
 ---
 
-## 18. 一句话结论
+## 16. 一句话结论
 
-v1.1 的正确收敛方向是：
+Curator 模块的正确收敛方向是：
 
 # `GoalStateDocument` 单核 + `SummaryEntry` 历史事实索引 + `SummaryCache` 近期窗口 + Summary 仓库按需检索
 
@@ -886,5 +778,4 @@ v1.1 的正确收敛方向是：
 
 ---
 
-*文档版本: v1.1-draft-converged*
-*最后更新: 2026-05-09*
+*版本：curator_v1.2 | 更新时间：2026-05-14*

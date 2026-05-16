@@ -79,6 +79,37 @@ export function findAgentRoundBoundaries<T extends BranchEntryLike>(branch: T[])
   return boundaries;
 }
 
+export function findAgentRoundBoundaryByRound<T extends BranchEntryLike>(
+  branch: T[],
+  agentRound: number,
+): AgentRoundBoundary | null {
+  return findAgentRoundBoundaries(branch).find((boundary) => boundary.agentRound === agentRound) ?? null;
+}
+
+export function resolveAgentRoundEntryRange<T extends BranchEntryLike>(
+  branch: T[],
+  agentRound: number,
+): { startAgentEntryIndex: number; endAgentEntryIndex: number } | null {
+  const boundary = findAgentRoundBoundaryByRound(branch, agentRound);
+  if (!boundary) return null;
+
+  let endAgentEntryIndex = boundary.endEntryIndex;
+  while (endAgentEntryIndex >= boundary.startEntryIndex) {
+    const entry = branch[endAgentEntryIndex];
+    const message = entry?.message as MessageLike | undefined;
+    if (entry?.type === "message" && message?.role === "user") {
+      endAgentEntryIndex -= 1;
+      continue;
+    }
+    break;
+  }
+
+  return {
+    startAgentEntryIndex: boundary.startEntryIndex,
+    endAgentEntryIndex: Math.max(boundary.startEntryIndex, endAgentEntryIndex),
+  };
+}
+
 export function getCurrentAgentRoundEntries<T extends BranchEntryLike>(branch: T[]): T[] {
   const boundaries = findAgentRoundBoundaries(branch);
   if (boundaries.length === 0) {

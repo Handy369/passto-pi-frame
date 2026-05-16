@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { buildReflectorInput, buildSummaryCacheExcerpt, buildCandidatePrinciples, extractRecentCuratorArtifacts } from '../grc-reflector-input.ts';
+import { buildReflectorInput, buildSummaryCacheExcerpt, buildAllPrinciples, extractRecentCuratorArtifacts } from '../grc-reflector-input.ts';
 import { buildReflectorGoalContext } from '../grc-goal-context.ts';
 import { buildReflectorSubagentPrompt } from '../grc-prompts.ts';
 import type { GoalStateDocument, PrincipleItem, SummaryEntry } from '../types.ts';
@@ -38,7 +38,7 @@ const summaryCache: SummaryEntry[] = Array.from({ length: 6 }, (_, index) => ({
   },
 }));
 
-const candidatePrinciples: PrincipleItem[] = [
+const allPrinciples: PrincipleItem[] = [
   {
     id: 'principle_a',
     created: '2026-05-01T00:00:00.000Z',
@@ -135,29 +135,26 @@ test('extractRecentCuratorArtifacts tolerates undefined/null branch message slot
   assert.deepEqual(artifacts.map((item) => item.agentRound), [19]);
 });
 
-test('buildCandidatePrinciples uses principlesManager search and tolerates missing manager', () => {
-  const queryCalls: Array<{ query: string; limit: number }> = [];
+test('buildAllPrinciples uses principlesManager listSlim and tolerates missing manager', () => {
+  let listCalls = 0;
   const manager = {
-    search(query: string, limit: number) {
-      queryCalls.push({ query, limit });
-      return candidatePrinciples.slice(0, limit);
+    listSlim(limit: number) {
+      listCalls += 1;
+      return allPrinciples.slice(0, limit).map((p) => ({ id: p.id, tags: p.tags, content: p.content }));
     },
   };
 
-  const selected = buildCandidatePrinciples(manager, 'reflector grounding compatibility', 2);
-  assert.equal(queryCalls.length, 1);
-  assert.equal(queryCalls[0]?.limit, 2);
+  const selected = buildAllPrinciples(manager);
+  assert.equal(listCalls, 1);
   assert.deepEqual(selected.map((item) => item.id), ['principle_a', 'principle_b']);
-  assert.deepEqual(buildCandidatePrinciples(null, 'anything', 3), []);
-  assert.deepEqual(buildCandidatePrinciples(manager, '   ', 3), []);
-});
+  assert.deepEqual(buildAllPrinciples(null), []);
+})
 
 test('buildReflectorInput assembles summary/artifact/principle grounding for prompt injection', () => {
   const context = buildReflectorGoalContext(goalState);
   const manager = {
-    search(query: string, limit: number) {
-      assert.match(query, /Reflector grounding/);
-      return candidatePrinciples.slice(0, limit);
+    listSlim(limit: number) {
+      return allPrinciples.slice(0, limit).map((p) => ({ id: p.id, tags: p.tags, content: p.content }));
     },
   };
 
@@ -197,20 +194,24 @@ test('buildReflectorInput assembles summary/artifact/principle grounding for pro
       },
     ],
     principlesManager: manager,
-    principleQuery: 'Reflector grounding compatibility query',
     summaryCacheLimit: 4,
     curatorArtifactsLimit: 2,
-    candidatePrinciplesLimit: 2,
   });
 
   assert.deepEqual(input.summaryCacheExcerpt?.map((item) => item.agentRound), [3, 4, 5, 6]);
   assert.deepEqual(input.recentCuratorArtifacts?.map((item) => item.agentRound), [17, 18]);
-  assert.deepEqual(input.candidatePrinciples?.map((item) => item.id), ['principle_a', 'principle_b']);
+  assert.deepEqual(input.allPrinciples?.map((item) => item.id), ['principle_a', 'principle_b']);
 
   const prompt = buildReflectorSubagentPrompt(input);
   assert.match(prompt, /<summary_cache_excerpt>/);
   assert.match(prompt, /<recent_curator_artifacts>/);
-  assert.match(prompt, /<candidate_principles>/);
+  assert.match(prompt, /<all_principles>/);
+  assert.match(prompt, /先逐条对照 allPrinciples/);
+  assert.match(prompt, /hit \/ expand \/ create 三个方向中三选一/);
+  assert.match(prompt, /禁止在未充分排除旧原则前盲目 create/);
+  assert.match(prompt, /默认从严：若你不能同时证明 global \+ atomic，就输出空的 principleOps/);
+  assert.match(prompt, /expand 的 content 必须是重写后的完整原则文本/);
+  assert.match(prompt, /create 的 content 不得包含具体文件路径、目录名、接口名、组件名、工作台名、benchmark 名、产品名或场景专名/);
   assert.match(prompt, /summary goal 6/);
   assert.match(prompt, /principle_a/);
   assert.match(prompt, /currentGoalState \/ goalContext/);

@@ -6,6 +6,8 @@ import { extractKeywords, generateId, nowIso } from "./utils.js";
 interface PrincipleMetadata {
   source?: string;
   sources?: string[];
+  origin?: "reflector" | "manual";
+  promoted?: boolean;
   hintCount?: number;
   activeScore?: number;
   lastHintedAt?: string;
@@ -46,7 +48,6 @@ interface PrinciplesRegistry {
 export interface PrinciplesDiagnostics {
   audit: {
     applyRuns: number;
-    markUsedRuns: number;
     pruneRuns: number;
     ops: {
       create: number;
@@ -60,8 +61,6 @@ export interface PrinciplesDiagnostics {
       merged: number;
       conflicted: number;
       decayed: number;
-      injectedHints: number;
-      deletedByHints: number;
       deletedByOverflow: number;
     };
   };
@@ -86,14 +85,21 @@ export interface PrinciplesDiagnostics {
   };
 }
 
+export interface SlimPrincipleItem {
+  id: string;
+  tags: string[];
+  content: string;
+}
+
 export interface PrinciplesManager {
   load(dir: string): Promise<void>;
   list(): PrincipleItem[];
+  listSlim(limit: number): SlimPrincipleItem[];
   search(query: string, limit: number): PrincipleItem[];
   listInjectable(limit: number): PrincipleItem[];
   applyPrincipleOps(ops: PrincipleOp[], options: ApplyPrincipleOpsOptions): Promise<{ changed: number; deleted: number }>;
-  markUsed(principles: PrincipleItem[]): Promise<void>;
   prune(maxCount: number): Promise<number>;
+  deleteByIds(ids: string[]): Promise<number>;
   getDiagnostics(): PrinciplesDiagnostics;
   getDirectory(): string;
   count(): number;
@@ -112,7 +118,6 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
   const diagnostics: PrinciplesDiagnostics = {
     audit: {
       applyRuns: 0,
-      markUsedRuns: 0,
       pruneRuns: 0,
       ops: {
         create: 0,
@@ -126,8 +131,6 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
         merged: 0,
         conflicted: 0,
         decayed: 0,
-        injectedHints: 0,
-        deletedByHints: 0,
         deletedByOverflow: 0,
       },
     },
@@ -170,6 +173,8 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     return {
       source: typeof metadata?.source === "string" ? metadata.source : undefined,
       sources: Array.isArray(metadata?.sources) ? metadata.sources.map(String).filter(Boolean).slice(-20) : [],
+      origin: metadata?.origin === "manual" ? "manual" : "reflector",
+      promoted: metadata?.promoted === true,
       hintCount,
       activeScore: Math.max(0, metadata?.activeScore ?? hintCount),
       lastHintedAt: typeof lastHintedAt === "string" ? lastHintedAt : undefined,
@@ -354,6 +359,8 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
       ...normalized,
       source: incomingSource ?? normalized.source,
       sources: Array.from(sources).slice(-20),
+      origin: normalized.origin === "manual" ? "manual" : "reflector",
+      promoted: normalized.promoted === true,
       mergeCount: (normalized.mergeCount ?? 0) + 1,
       hitCount: normalized.hintCount,
       lastUsed: normalized.lastHintedAt,
@@ -420,7 +427,20 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     return true;
   }
 
+  function getHitCount(item: Pick<PrincipleItem, "metadata">): number {
+    return item.metadata.hitCount ?? item.metadata.hintCount ?? 0;
+  }
+
+  function isManualPromoted(item: Pick<PrincipleItem, "metadata">): boolean {
+    return item.metadata.origin === "manual" && item.metadata.promoted === true;
+  }
+
+  function isReflectorInjectable(item: Pick<PrincipleItem, "metadata">): boolean {
+    return item.metadata.origin !== "manual" && getHitCount(item) > HIGH_VALUE_HINT_THRESHOLD;
+  }
+
   function shouldDecay(item: IndexedPrinciple, nowMs: number): boolean {
+    if (isManualPromoted(item)) return false;
     const updatedAt = new Date(item.updated ?? item.created).getTime();
     if (!Number.isFinite(updatedAt)) return false;
     if (nowMs - updatedAt < 7 * 24 * 60 * 60 * 1000) return false;
@@ -457,41 +477,18 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     return changed;
   }
 
-  function shouldDeleteByHintWindows(item: IndexedPrinciple): boolean {
-    const updatedAt = new Date(item.updated ?? item.created).getTime();
-    if (!Number.isFinite(updatedAt)) return false;
-    if (Date.now() - updatedAt < 7 * 24 * 60 * 60 * 1000) return false;
-
-    const recent30 = recentHintCount(item, 30);
-    const recent60 = recentHintCount(item, 60);
-    const activeScore = item.metadata.activeScore ?? item.metadata.hintCount ?? item.metadata.hitCount ?? 0;
-
-    if (recent30 < 1) return true;
-    if (recent60 < 2) return true;
-    if (activeScore <= 0 && recent30 === 0) return true;
-    return false;
-  }
-
-  function pruneDeletedByHintWindows(): number {
-    const idsToDelete: string[] = [];
-    for (const item of index.values()) {
-      if (shouldDeleteByHintWindows(item)) {
-        idsToDelete.push(item.id);
-      }
-    }
-    for (const id of idsToDelete) {
-      index.delete(id);
-    }
-    return idsToDelete.length;
-  }
 
   function isInjectable(item: IndexedPrinciple): boolean {
-    return item.metadata.lifecycle !== "stale"
-      && item.metadata.lifecycle !== "archived"
-      && item.metadata.lifecycle !== "disabled";
+    if (item.metadata.lifecycle === "stale" || item.metadata.lifecycle === "archived" || item.metadata.lifecycle === "disabled") {
+      return false;
+    }
+    if (isManualPromoted(item)) return true;
+    return isReflectorInjectable(item);
   }
 
   function compareInjectable(a: IndexedPrinciple, b: IndexedPrinciple): number {
+    const promotedDiff = Number(isManualPromoted(b)) - Number(isManualPromoted(a));
+    if (promotedDiff !== 0) return promotedDiff;
     const activeDiff = (b.metadata.activeScore ?? 0) - (a.metadata.activeScore ?? 0);
     if (activeDiff !== 0) return activeDiff;
     const recent60Diff = recentHintCount(b, 60) - recentHintCount(a, 60);
@@ -611,6 +608,8 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
             ...(existingMetadataById.get(item.id) ?? {}),
             source: item.metadata.source,
             sources: [...(item.metadata.sources ?? [])],
+            origin: item.metadata.origin === "manual" ? "manual" : "reflector",
+            promoted: item.metadata.promoted === true,
             hintCount: item.metadata.hintCount ?? item.metadata.hitCount ?? 0,
             activeScore: item.metadata.activeScore ?? item.metadata.hintCount ?? item.metadata.hitCount ?? 0,
             lastHintedAt: item.metadata.lastHintedAt ?? item.metadata.lastUsed,
@@ -646,7 +645,9 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
           || item.metadata.activeScore == null
           || item.metadata.lastHintedAt == null
           || !Array.isArray(item.metadata.hintTimestamps)
-          || item.metadata.conflictGroupId === undefined;
+          || item.metadata.conflictGroupId === undefined
+          || item.metadata.origin === undefined
+          || item.metadata.promoted === undefined;
         if (hadLegacyShape) {
           diagnostics.migration.normalizedRegistryItems += 1;
         }
@@ -733,9 +734,15 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     diagnostics.audit.applyRuns += 1;
 
     for (const op of ops) {
-      diagnostics.audit.ops[op.op] += 1;
+      if (op.op === "hit") {
+        diagnostics.audit.ops.reuse += 1;
+      } else if (op.op === "expand") {
+        diagnostics.audit.ops.merge += 1;
+      } else {
+        diagnostics.audit.ops[op.op] += 1;
+      }
 
-      if (op.op === "reuse") {
+      if (op.op === "reuse" || op.op === "hit") {
         const existing = index.get(op.targetId);
         if (!existing) continue;
         bumpHint(existing);
@@ -763,9 +770,14 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
           metadata: normalizeMetadata({
             source: options.source,
             sources: options.source ? [options.source] : [],
-            hintCount: 0,
-            activeScore: 0,
-            hintTimestamps: [],
+            origin: "reflector",
+            promoted: false,
+            hintCount: 1,
+            hitCount: 1,
+            activeScore: 1,
+            lastHintedAt: now,
+            lastUsed: now,
+            hintTimestamps: [now],
           }),
         };
         index.set(item.id, asIndexed(item));
@@ -774,10 +786,11 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
         continue;
       }
 
-      if (op.op === "merge") {
+      if (op.op === "merge" || op.op === "expand") {
         const existing = index.get(op.targetId);
         if (!existing) continue;
         if (mergeIntoExisting(existing, { content: op.content, tags: op.tags }, options.source)) {
+          bumpHint(existing);
           diagnostics.audit.effects.merged += 1;
           changed += 1;
         }
@@ -795,17 +808,15 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
     }
 
     const decayed = decayPrinciples();
-    const deletedByHints = pruneDeletedByHintWindows();
     const overflowDeleted = Array.from(index.values()).length > options.hardMaxCount
       ? (await pruneInternal(options.hardMaxCount))
       : 0;
 
     diagnostics.audit.effects.decayed += decayed;
-    diagnostics.audit.effects.deletedByHints += deletedByHints;
     diagnostics.audit.effects.deletedByOverflow += overflowDeleted;
 
     const totalChanged = changed + decayed;
-    const totalDeleted = deletedByHints + overflowDeleted;
+    const totalDeleted = overflowDeleted;
     if (totalChanged > 0 || totalDeleted > 0) {
       await writeRegistry();
     }
@@ -843,6 +854,17 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
         .map(toPublicItem);
     },
 
+    listSlim(limit: number): SlimPrincipleItem[] {
+      return Array.from(index.values())
+        .sort((a, b) => {
+          const aScore = (a.metadata.hintCount ?? a.metadata.hitCount ?? 0);
+          const bScore = (b.metadata.hintCount ?? b.metadata.hitCount ?? 0);
+          return bScore - aScore;
+        })
+        .slice(0, Math.max(0, limit))
+        .map((item) => ({ id: item.id, tags: [...item.tags], content: item.content }));
+    },
+
     search(query: string, limit: number): PrincipleItem[] {
       const trimmed = query.trim();
       if (!trimmed) return [];
@@ -875,41 +897,30 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
       return applyOpsInternal(ops, options);
     },
 
-    async markUsed(principles: PrincipleItem[]): Promise<void> {
-      diagnostics.audit.markUsedRuns += 1;
-      let changed = false;
-      let hinted = 0;
-      for (const principle of principles) {
-        const existing = index.get(principle.id);
-        if (!existing) continue;
-        bumpHint(existing);
-        hinted += 1;
-        changed = true;
-      }
-      const decayed = decayPrinciples();
-      const deleted = pruneDeletedByHintWindows();
-      diagnostics.audit.effects.injectedHints += hinted;
-      diagnostics.audit.effects.decayed += decayed;
-      diagnostics.audit.effects.deletedByHints += deleted;
-      if (changed || decayed > 0 || deleted > 0) {
-        await writeRegistry();
-      }
-      refreshHealth();
-    },
-
     async prune(maxCount: number): Promise<number> {
       diagnostics.audit.pruneRuns += 1;
       const decayed = decayPrinciples();
-      const deletedByHints = pruneDeletedByHintWindows();
       const overflow = await pruneInternal(maxCount);
       diagnostics.audit.effects.decayed += decayed;
-      diagnostics.audit.effects.deletedByHints += deletedByHints;
       diagnostics.audit.effects.deletedByOverflow += overflow;
-      if (decayed > 0 || deletedByHints > 0) {
+      if (decayed > 0) {
         await writeRegistry();
       }
       refreshHealth();
-      return deletedByHints + overflow;
+      return overflow;
+    },
+
+    async deleteByIds(ids: string[]): Promise<number> {
+      let deleted = 0;
+      for (const id of ids) {
+        if (index.delete(id)) deleted += 1;
+      }
+      if (deleted > 0) {
+        diagnostics.audit.effects.deletedByOverflow += deleted;
+        await writeRegistry();
+        refreshHealth();
+      }
+      return deleted;
     },
 
     getDiagnostics(): PrinciplesDiagnostics {
@@ -930,14 +941,30 @@ export function createPrinciplesManager(logger: Logger): PrinciplesManager {
 export function formatPrinciplesForInjection(principles: PrincipleItem[]): string {
   if (principles.length === 0) return "";
 
-  const lines = [
-    "--- 经验原则（来自历史会话）---",
-    "以下为历史经验启发，仅在不与当前目标、当前用户要求、当前代码事实冲突时参考。",
-  ];
-  for (const principle of principles) {
-    lines.push(`- ${principle.content}`);
+  const constitutionPrinciples = principles.filter((principle) => principle.metadata.origin === "manual" && principle.metadata.promoted === true);
+  const historicalPrinciples = principles.filter((principle) => !(principle.metadata.origin === "manual" && principle.metadata.promoted === true));
+
+  const lines: string[] = [];
+
+  if (constitutionPrinciples.length > 0) {
+    lines.push("--- 人工宪法原则 ---");
+    lines.push("以下为人工确认并晋升的长期原则，优先于普通历史经验层，但不得覆盖当前用户明确要求与当前代码事实。");
+    for (const principle of constitutionPrinciples) {
+      lines.push(`- ${principle.content}`);
+    }
+    lines.push("--- 人工宪法原则结束 ---");
   }
-  lines.push("--- 经验原则结束 ---");
+
+  if (historicalPrinciples.length > 0) {
+    if (lines.length > 0) lines.push("");
+    lines.push("--- 经验原则（来自历史会话）---");
+    lines.push("以下为历史经验启发，仅在不与当前目标、当前用户要求、当前代码事实冲突时参考。");
+    for (const principle of historicalPrinciples) {
+      lines.push(`- ${principle.content}`);
+    }
+    lines.push("--- 经验原则结束 ---");
+  }
+
   return lines.join("\n");
 }
 
@@ -1000,6 +1027,8 @@ function parseLegacyPrincipleYaml(content: string): Omit<PrincipleItem, "id" | "
         const key = line.slice(0, separator).trim();
         const value = line.slice(separator + 1).trim().replace(/^["']|["']$/g, "");
         if (key === "source" && value) metadata.source = value;
+        if (key === "origin" && (value === "reflector" || value === "manual")) metadata.origin = value;
+        if (key === "promoted") metadata.promoted = value === "true";
         if (key === "lastUsed" && value) metadata.lastUsed = value;
         if (key === "lastHintedAt" && value) metadata.lastHintedAt = value;
         if (key === "lastDecayAt" && value) metadata.lastDecayAt = value;

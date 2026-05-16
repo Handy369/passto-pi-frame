@@ -30,7 +30,7 @@
 > 最终架构说明：`docs/v1.1/V1_1_FINAL_ARCHITECTURE.md`
 
 - 主调度已切到 **agent-round / post-round**：`agent_end` 后后台启动 Reflector；Curator 在 `before_agent_start` 处理上一轮
-- `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles
+- `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles（分为人工宪法原则层与普通历史经验层）
 - `agent_start` 会写入 `passto-round-boundary`；`session_start` 会从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复运行态与 GRC 轻事实态（含显式校验与 replay）
 - `references/generator-contract.md` 现为静态单一维护源：`buildGeneratorCharterPrompt()` 从中投影 Generator Charter；`session_start` 会自动把 Constitution 投影同步到 `~/.pi/agent/APPEND_SYSTEM.md`
 - 自动同步带有安全边界：若 `generator-contract.md` 缺失，则跳过同步，而不会使用 fallback 覆写全局 `APPEND_SYSTEM.md`
@@ -39,7 +39,7 @@
 - 长运行单次任务中，当当前 run 内的 `turn-round` 达到 `midRunTurnThreshold` 时，会触发一次 mid-run Reflector，并持久化 `grc-mid-run-debug`
 - Reflector / Curator 通过后台 `complete()` 异步运行，不阻塞主对话
 - **Reflector** 负责产出顾问意见与 `principleOps`；**Curator** 负责产出 `summaryEntry + GoalStateDocument + signal`
-- principles 现按 `hintCount + activeScore + conflictGroupId` 治理，长期低价值原则会自动衰减并删除，持久化到 `~/.passtocontext/memory/principles/principles-registry.json`
+- principles 现已分两层：`origin=manual && promoted=true` 的人工宪法原则，以及其余历史经验原则；前者在注入时优先于普通经验层，且不参与自动衰减/删除；后者继续按 `hintCount + activeScore + conflictGroupId` 治理，持久化到 `~/.passtocontext/memory/principles/principles-registry.json`
 - `context` hook 当前优先走 `GoalState + SummaryCache + 最近 N 个 agent-round 原始消息`，不再注入 legacy `lastSummary` fallback
 - `SummaryCache` 注入会自动排除最近已保留的 raw rounds，避免与 recent messages 重复；缓存溢出时会记录 eviction 日志
 - `session_before_compact` 仅在存在 Curator 最新摘要时由扩展接管；否则完全回退 Pi 默认 compaction
@@ -196,6 +196,34 @@ Widget 会保留极简关闭态提示：`PTC:off`。
 - 校验 decision 中的 principle id 是否全部存在
 - 通过后仅写回 `metadata.lifecycle` 与 `updated`
 
+### Manual principle 最小 JSON 样例
+
+当前人工宪法原则的主路径是**直接手改**：
+
+`~/.passtocontext/memory/principles/principles-registry.json`
+
+最小条目示例：
+
+```json
+{
+  "id": "manual-principle-keep-scope-tight",
+  "created": "2026-05-12T11:30:00.000Z",
+  "updated": "2026-05-12T11:30:00.000Z",
+  "tags": ["execution", "manual"],
+  "content": "始终围绕当前用户目标行动，不擅自扩展顺便做的额外目标。",
+  "metadata": {
+    "origin": "manual",
+    "promoted": true,
+    "lifecycle": "active"
+  }
+}
+```
+
+语义说明：
+- `origin = manual`：表示该条原则由人工维护
+- `promoted = true`：表示该条进入人工宪法原则层，注入时优先于普通历史经验层
+- `lifecycle = active`：保持可注入状态
+
 ## 配置
 
 PasstoContext 使用 JSON 配置文件：
@@ -297,7 +325,7 @@ PasstoContext 使用 JSON 配置文件：
 ├── sessions/       # 自动保存的会话摘要
 ├── entities/       # 实体知识
 ├── notes/          # 兼容保留的笔记目录（当前公开命令不再暴露手动保存入口）
-└── principles/     # Curator 提取的全局经验原则（registry JSON）
+└── principles/     # principles-registry.json：人工宪法原则 + Reflector 历史经验原则
 ```
 
 示例记忆文件：
@@ -419,13 +447,13 @@ before_agent_start
 - 主调度已切到 `agent_end -> Reflector` 与 `before_agent_start -> Curator(previous-round)`
 - `agent_start` 会持久化 `passto-round-boundary`，用于按 agent-round 切分当前轮输入与 recent rounds
 - Curator 事实模型已升级为 `summaryEntry + GoalStateDocument + signal`
-- `before_agent_start` 已真实注入 `GoalState + SummaryCache + Reflector advice + principles`
+- `before_agent_start` 已真实注入 `GoalState + SummaryCache + Reflector advice + principles`，其中 principles 按“人工宪法原则层 > 普通历史经验层”解释
 - `SummaryCache` 注入会自动避开最近 raw rounds，减少重复信息
 - `context` 主路径已改为“最近 agent-round 原始消息 + GoalState/SummaryCache”，并移除了 `lastSummary` 兼容 fallback
 - `grc-curator-artifact` 已落地：Curator 完成后增量持久化，`session_start` 可 replay 恢复 `GoalState / SummaryCache / lastSignal / lastSummaryEntry`
 - `grc-reflector-artifact` 已落地：Reflector 完成后增量持久化，`session_start` 可 replay 恢复 `lastAdvice / lastDiagnosis / processedUpToAgentRound / lastReflectedAgentRound`
 - artifact 恢复已具备显式校验与观测：会记录 rejected 数、恢复后的 `summaryCacheRounds`、`goalStateRound`、`lastDiagnosis` 与 `lastReflectedRound`
-- principles 会真实落盘到 `~/.passtocontext/memory/principles/principles-registry.json`，治理方式为 `principleOps + registry`
+- principles 会真实落盘到 `~/.passtocontext/memory/principles/principles-registry.json`；`manual + promoted` 条目作为人工宪法原则直接手改该 JSON 维护，其余 Reflector 条目继续走 `principleOps + registry`
 - `/ptc status` 已收敛为总状态视图：`Runtime`、`Memory / Tracking / Widget / GRC`、`Current agent-round`、`Current turn-round`、`Reflector status`、`Curator status`、`SummaryCache entries`、`GoalState Snapshot`、`Last Signal`、`Latest Curator Artifact Round`
 - Reflector 在“无实质建议”时会记录日志：`Reflector finished (no substantive advice)`
 - `runtimeMode=off` 会关闭 GRC prompt 注入、principles 注入、context 修剪和 curator-aware compaction

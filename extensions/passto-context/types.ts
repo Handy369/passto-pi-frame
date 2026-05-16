@@ -188,13 +188,19 @@ export interface ReflectorAssetCandidate {
   notes?: string;
 }
 
+export interface SlimPrincipleItem {
+  id: string;
+  tags: string[];
+  content: string;
+}
+
 export interface ReflectorInput {
   currentRoundConversation: string;
   currentGoalState: GoalStateDocument | null;
   goalContext?: ReflectorGoalContext | null;
   summaryCacheExcerpt?: SummaryEntry[];
   recentCuratorArtifacts?: CuratorArtifactEntry[];
-  candidatePrinciples?: PrincipleItem[];
+  allPrinciples?: SlimPrincipleItem[];
 }
 
 export interface ReflectorResult {
@@ -234,6 +240,16 @@ export type PrincipleOp =
     }
   | {
       op: "conflict";
+      targetId: string;
+      content: string;
+      tags: string[];
+    }
+  | {
+      op: "hit";
+      targetId: string;
+    }
+  | {
+      op: "expand";
       targetId: string;
       content: string;
       tags: string[];
@@ -351,6 +367,8 @@ export interface PrincipleItem {
   metadata: {
     source?: string;
     sources?: string[];
+    origin?: "reflector" | "manual";
+    promoted?: boolean;
     hintCount?: number;
     activeScore?: number;
     lastHintedAt?: string;

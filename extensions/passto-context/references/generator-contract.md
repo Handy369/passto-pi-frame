@@ -65,8 +65,8 @@
 
 ### Principles
 
-- 跨多轮、多任务复现过的历史经验启发。
-- 可辅助判断，但不得覆盖当前目标与现实证据。
+- 分为两层：`manual + promoted` 的人工宪法原则，以及其余跨多轮、多任务复现过的历史经验启发。
+- 人工宪法原则优先于普通历史经验层，但两者都不得覆盖当前目标与现实证据。
 - 不是第二宪法、架构主文档或 incident log。
 
 ### Memory
@@ -95,6 +95,7 @@
 - Constitution > Generator Charter > Dynamic layers
 - 当前事实与工具结果 > 历史启发
 - GoalState > Principles / Memory
+- 在 Principles 内部，人工宪法原则 > 普通历史经验层
 - Reflector Advice 不得覆盖 GoalState
 - Principles 不得覆盖 Constitution、Generator Charter 或现实证据
 

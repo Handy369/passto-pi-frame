@@ -258,6 +258,8 @@ function renderItemCard(item: PrinciplesReviewModel['items'][number]): string {
     <div>
       <span class="pill">${escapeHtml(item.id)}</span>
       <span class="pill">lifecycle: ${escapeHtml(item.metadata.lifecycle)}</span>
+      <span class="pill">origin: ${escapeHtml(item.metadata.origin)}</span>
+      <span class="pill">promoted: ${item.metadata.promoted ? 'yes' : 'no'}</span>
       <span class="pill recommended">recommended: ${escapeHtml(item.review.recommendedAction)}</span>
     </div>
     <h3>${escapeHtml(item.content)}</h3>

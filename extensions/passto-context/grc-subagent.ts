@@ -349,13 +349,16 @@ function parsePrincipleOp(raw: unknown): PrincipleOp | null {
   const targetId = typeof value.targetId === "string" ? value.targetId.trim() : "";
   const draft = parsePrincipleDraft(value);
 
-  if (op === "reuse" && targetId) {
+  if ((op === "reuse" || op === "hit") && targetId) {
     return { op, targetId };
   }
-  if (op === "create" && draft) {
+  if (op === "create" && draft && isValidReflectorCreateContent(draft.content)) {
     return { op, content: draft.content, tags: draft.tags };
   }
-  if (op === "merge" && targetId && draft) {
+  if ((op === "merge" || op === "expand") && targetId && draft) {
+    if (op === "expand" && !isValidReflectorExpandContent(draft.content)) {
+      return null;
+    }
     return { op, targetId, content: draft.content, tags: draft.tags };
   }
   if (op === "conflict" && targetId && draft) {
@@ -379,6 +382,24 @@ function parsePrincipleDraft(raw: unknown): PrincipleDraft | null {
     content: parsed.content.trim(),
     tags: Array.from(new Set(tags)).slice(0, 4),
   };
+}
+
+const APPEND_STYLE_EXPAND_RE = /(?:^|[。；;\n])\s*(新增|补充|延伸)\s*[:：]/;
+const CODE_OR_SCENE_SPECIFIC_NAME_PATTERNS = [
+  /`[^`]+`/,
+  /\b(?:\.\.?\/|\/)[^\s]+/,
+  /\b[\w./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|ya?ml|toml|sh)\b/i,
+  /\b[a-z]+(?:[A-Z][a-z0-9]+){1,}\b/,
+  /\b[A-Z][a-z0-9]+(?:[A-Z][a-z0-9]+){1,}\b/,
+  /\b[a-z0-9]+(?:_[a-z0-9]+)+\b/,
+];
+
+function isValidReflectorExpandContent(content: string): boolean {
+  return !APPEND_STYLE_EXPAND_RE.test(content);
+}
+
+function isValidReflectorCreateContent(content: string): boolean {
+  return !CODE_OR_SCENE_SPECIFIC_NAME_PATTERNS.some((pattern) => pattern.test(content));
 }
 
 function stripTrailingJsonCodeBlock(text: string): string {

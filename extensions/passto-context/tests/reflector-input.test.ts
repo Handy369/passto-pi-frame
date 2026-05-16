@@ -93,6 +93,7 @@ test('buildReflectorSubagentPrompt includes current goal state and goal context 
 
   assert.match(prompt, /<current_goal_state>/);
   assert.match(prompt, /<goal_context>/);
+  assert.match(prompt, /<all_principles>/);
   assert.match(prompt, /升级 Reflector 输入契约/);
   assert.match(prompt, /currentGoalState \/ goalContext/);
   assert.match(prompt, /## 目标对齐判断/);

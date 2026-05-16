@@ -15,6 +15,7 @@ import * as fs from "node:fs/promises";
 import { spawn } from "node:child_process";
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
 import { ensureConfigExists, getConfigFilePath } from "./config.js";
 import { createCompactionHandler } from "./compaction.js";
 import { createMemoryManager } from "./memory.js";
@@ -33,7 +34,7 @@ import {
   updateCuratorStatus,
   updateReflectorStatus,
 } from "./grc-state.js";
-import { buildGeneratorCharterPrompt, buildGoalStateInjection, buildReflectionSteerPrompt, buildReflectorInjection, buildSummaryCacheInjection } from "./grc-prompts.js";
+import { buildReflectionSteerPrompt, buildReflectorInjection } from "./grc-prompts.js";
 import { ensureAppendSystemPromptSync } from "./grc-generator-contract.ts";
 import { buildReflectorGoalContext } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
@@ -41,6 +42,7 @@ import { formatReflectorDiagnosisLabel } from "./grc-reflector-diagnosis.ts";
 import { buildReflectorInput } from "./grc-reflector-input.ts";
 import { getSessionStateGuardReason, isSessionStateReady, normalizeSessionFile } from "./grc-session-guard.ts";
 import { createPrinciplesManager, formatPrinciplesForInjection } from "./grc-principles.js";
+import { executePrinciplesCurator, PRINCIPLES_CURATOR_TRIGGER, PRINCIPLES_CURATOR_TARGET } from "./grc-principles-curator.js";
 import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
 import { formatPTCStatus } from "./ptc-status.ts";
@@ -53,10 +55,14 @@ import {
   getRecentAgentRoundMessages,
   getSlidingWindowAgentRoundMessages,
   mergeRecentAgentRoundMessagesWithContext,
+  resolveAgentRoundEntryRange,
   serializeCurrentAgentRoundConversation,
   serializePreviousAgentRoundConversation,
 } from "./grc-context-manager.js";
-import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, ReflectorArtifactEntry, SessionState } from "./types.js";
+import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, ReflectorArtifactEntry, SessionState, SummaryEntry } from "./types.js";
+import { hydrateSummaryEntrySessionContext } from "./summary-warehouse.js";
+import { executeSummarySearchTool, getSessionSummaryWarehouseEntries } from "./runtime-summary-search.js";
+import { createBeforeAgentStartHandler } from "./before-agent-start-event.ts";
 
 // =============================================================================
 // Module State (module-level singleton for the extension lifetime)
@@ -83,6 +89,7 @@ let curatorStartedAt: number | null = null;
 let widgetNotice: WidgetNoticeState | null = null;
 let orchestrationSuspended = false;
 let orchestrationReason = "";
+let principlesCuratorRunning = false;
 let currentRun: CurrentRunState = createInitialCurrentRunState();
 
 type GRCJobTargets = "reflector" | "curator";
@@ -217,6 +224,24 @@ function appendReflectorArtifactEntry(pi: ExtensionAPI, entry: ReflectorArtifact
   }
 }
 
+function resolveSummaryEntryRange(ctx: ExtensionContext, agentRound: number): SummaryEntry["sessionEntryRange"] | undefined {
+  return resolveAgentRoundEntryRange(
+    ctx.sessionManager.getBranch() as Array<{ type?: string; customType?: string; data?: unknown; message?: unknown }>,
+    agentRound,
+  ) ?? undefined;
+}
+
+function hydrateSummaryEntryForSession(
+  ctx: ExtensionContext,
+  summaryEntry: SummaryEntry | null,
+  agentRound: number,
+): SummaryEntry | null {
+  return hydrateSummaryEntrySessionContext(summaryEntry, {
+    sessionFile: getCurrentSessionFile(ctx),
+    sessionEntryRange: resolveSummaryEntryRange(ctx, agentRound),
+  });
+}
+
 function terminalFileLink(filePath: string, label = filePath): string {
   try {
     const href = pathToFileURL(filePath).href;
@@ -224,27 +249,6 @@ function terminalFileLink(filePath: string, label = filePath): string {
   } catch {
     return label;
   }
-}
-
-function estimateSessionMemoryFootprint(): { sizeLabel: string; tokenLabel: string } {
-  if (!memory || !config?.memory.enabled) {
-    return { sizeLabel: "0", tokenLabel: "0" };
-  }
-
-  const items = memory.list();
-  if (items.length === 0) {
-    return { sizeLabel: "0", tokenLabel: "0" };
-  }
-
-  const serialized = items
-    .map((item) => [`# ${item.type}:${item.id}`, item.tags.join(","), item.content].filter(Boolean).join("\n"))
-    .join("\n\n");
-
-  const bytes = new TextEncoder().encode(serialized).length;
-  const tokens = estimateTokens(serialized);
-  const sizeLabel = formatCompactK(bytes);
-  const tokenLabel = tokens >= 1024 ? `${(tokens / 1024).toFixed(1)}kT` : `${tokens}T`;
-  return { sizeLabel, tokenLabel };
 }
 
 function formatSubagentRuntime(status: GRCState["reflector"]["status"], startedAt: number | null): string {
@@ -338,8 +342,8 @@ function formatWidgetStatus(ctx: ExtensionContext, state: SessionState | null, g
   const contextUsageLabel = getContextUsageLabel(ctx);
   parts.push(`${runLabel} ${contextUsageLabel}`);
 
-  const memoryFootprint = estimateSessionMemoryFootprint();
-  parts.push(`记:${memoryFootprint.sizeLabel}`);
+  const sessionCreated = principles?.getDiagnostics().audit.effects.created ?? 0;
+  parts.push(`记:${sessionCreated}`);
   parts.push(`思:${formatSubagentRuntime(getEffectiveReflectorStatus(), reflectorStartedAt)}`);
   parts.push(`理:${formatSubagentRuntime(getEffectiveCuratorStatus(), curatorStartedAt)}`);
 
@@ -393,6 +397,7 @@ function resetModuleState(): void {
   }
   orchestrationSuspended = false;
   orchestrationReason = "";
+  principlesCuratorRunning = false;
   currentRun = createInitialCurrentRunState();
 }
 
@@ -540,6 +545,26 @@ async function openConfigInSystemEditor(filePath: string): Promise<{ ok: true } 
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "ptc_search_summary",
+    label: "Search Session Summaries",
+    description: "Search current-session curator summaries that may already be outside SummaryCache.",
+    promptSnippet: "Search current-session historical summaries by goal, files, decisions, blockers, or error words.",
+    promptGuidelines: [
+      "Use ptc_search_summary when you need to recover older current-session facts that are no longer in SummaryCache.",
+      "Use ptc_search_summary with queries based on goal names, file paths, key decisions, blocker words, or error terms.",
+    ],
+    parameters: Type.Object({
+      query: Type.String({ description: "Search query for current-session summaries" }),
+      limit: Type.Optional(Type.Number({ description: "Maximum number of hits to return", default: 5, minimum: 1, maximum: 20 })),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const result = executeSummarySearchTool(params, ctx);
+      logger?.debug(`ptc_search_summary hits=${result.details.hits.length} query=${JSON.stringify(params.query)} warehouse=${result.details.totalWarehouseEntries}`);
+      return result;
+    },
+  });
+
   function startMidRunReflector(ctx: ExtensionContext): void {
     if (!config || !logger || !grcState || !sessionActive) {
       logger?.debug("Skipped mid-run Reflector: extension state not ready");
@@ -712,7 +737,6 @@ export default function (pi: ExtensionAPI) {
       summaryCache: grcState.curator.summaryCache,
       branchEntries: branch as Array<{ type?: string; customType?: string; data?: unknown }>,
       principlesManager: principles,
-      principleQuery: reflectorConversation,
     });
 
     logger?.debug(
@@ -802,6 +826,32 @@ export default function (pi: ExtensionAPI) {
                 logger?.debug(
                   `Applied ${result.principleOps.length} reflector principle ops (changed=${changed}, deleted=${deleted}, totals=${summarizePrincipleOps(result.principleOps)}, cumulativeCreate=${diagnostics.audit.effects.created}, cumulativeReuse=${diagnostics.audit.effects.reused}, cumulativeMerge=${diagnostics.audit.effects.merged}, cumulativeConflict=${diagnostics.audit.effects.conflicted})`,
                 );
+                // Trigger PrinciplesCurator when principles count reaches threshold
+                const count = principles.count();
+                if (count >= PRINCIPLES_CURATOR_TRIGGER && !principlesCuratorRunning && config && ctx) {
+                  principlesCuratorRunning = true;
+                  const allPrinciples = principles.list();
+                  logger?.info(`PrinciplesCurator scheduled: count=${count} >= threshold=${PRINCIPLES_CURATOR_TRIGGER}`);
+                  void executePrinciplesCurator({
+                    principles: allPrinciples,
+                    ctx,
+                    config: config.grc,
+                    logger: logger ?? { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} },
+                    principlesManager: principles,
+                  })
+                    .then((res) => {
+                      if (res) {
+                        setTransientGRCStatus(ctx, `原则库治理完成：保留${res.keptCount}条`);
+                        refreshWidget(ctx);
+                      }
+                    })
+                    .catch((err) => {
+                      logger?.warn("PrinciplesCurator failed:", err);
+                    })
+                    .finally(() => {
+                      principlesCuratorRunning = false;
+                    });
+                }
               })
               .catch((err) => {
                 logger?.warn("Failed to apply reflector principle ops:", err);
@@ -860,7 +910,11 @@ export default function (pi: ExtensionAPI) {
             );
           }
           const reconciledResult = reconcileCuratorGoalState(grcState.curator.lastGoalState, result);
-          const normalizedSummaryEntry = reconciledResult?.summaryEntry ?? null;
+          const normalizedSummaryEntry = hydrateSummaryEntryForSession(
+            ctx,
+            reconciledResult?.summaryEntry ?? null,
+            targetPreviousAgentRound,
+          );
           const normalizedGoalState = reconciledResult?.goalState ?? null;
           const normalizedSignal = reconciledResult?.signal ?? null;
           let nextState = updateCuratorStatus(
@@ -1090,135 +1144,21 @@ export default function (pi: ExtensionAPI) {
   // Before Agent Start (Memory Injection)
   // ===========================================================================
 
-  pi.on("before_agent_start", async (event, ctx) => {
-    if (!config) {
-      return;
-    }
-
-    try {
-      updateOrchestrationSuspension(ctx);
-
-      if (!isCurrentSessionStateReady(ctx)) {
-        logger?.debug(`before_agent_start skipped runtime injections: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"}`);
-        return;
-      }
-
-      if (!isRuntimeEnabled()) {
-        logger?.debug("before_agent_start skipped runtime injections: runtimeMode=off");
-        return;
-      }
-
-      if (grcState && !curatorPromise) {
-        const curatorAutoEnabled = config.grc.enabled;
-        if (curatorAutoEnabled && isGRCAutoProcessingAllowed()) {
-          startGRCBackgroundJobs(ctx, "curator");
-        }
-      }
-
-      let systemPrompt = event.systemPrompt;
-      const injectionDiagnostics: string[] = [];
-
-      const grcPromptEnabled = config.grc.enabled && !orchestrationSuspended;
-      if (grcPromptEnabled) {
-        systemPrompt += `\n\n${buildGeneratorCharterPrompt()}`;
-        injectionDiagnostics.push("generator-charter");
-      } else {
-        injectionDiagnostics.push(
-          `generator-charter:skip(grcEnabled=${config.grc.enabled}, suspended=${orchestrationSuspended}, runtimeMode=${grcState?.runtimeMode ?? "n/a"})`,
-        );
-      }
-
-      if (grcPromptEnabled && grcState?.curator.lastGoalState) {
-        const goalStateInjection = buildGoalStateInjection(grcState.curator.lastGoalState, config.grc.maxGoalStateActive);
-        if (goalStateInjection) {
-          systemPrompt += `\n\n${goalStateInjection}`;
-          injectionDiagnostics.push(`goal-state(${goalStateInjection.length} chars)`);
-        }
-      } else {
-        injectionDiagnostics.push(`goal-state:skip(enabled=${grcPromptEnabled}, hasGoalState=${Boolean(grcState?.curator.lastGoalState)})`);
-      }
-
-      if (grcPromptEnabled && grcState && grcState.curator.summaryCache.length > 0) {
-        const injectedSummaryCacheRounds = grcState.curator.summaryCache
-          .filter((entry) => entry.agentRound <= Math.max(0, grcState.currentAgentRound - config.grc.keepRecentAgentRounds))
-          .map((entry) => entry.agentRound);
-        const summaryCacheInjection = buildSummaryCacheInjection(
-          grcState.curator.summaryCache,
-          config.grc.summaryCacheSize,
-          config.grc.keepRecentAgentRounds,
-        );
-        if (summaryCacheInjection) {
-          systemPrompt += `\n\n${summaryCacheInjection}`;
-          injectionDiagnostics.push(`summary-cache(${injectedSummaryCacheRounds.join(",") || "none"}/${summaryCacheInjection.length} chars)`);
-        } else {
-          injectionDiagnostics.push(`summary-cache:skip-all-overlap(total=${grcState.curator.summaryCache.length}, keepRecentAgentRounds=${config.grc.keepRecentAgentRounds})`);
-        }
-      } else {
-        injectionDiagnostics.push(`summary-cache:skip(enabled=${grcPromptEnabled}, size=${grcState?.curator.summaryCache.length ?? 0})`);
-      }
-
-      if (grcState?.mode === "grc" && grcState.reflector.status === "done" && grcState.reflector.lastAdvice) {
-        const reflectorInjection = buildReflectorInjection(grcState.reflector.lastAdvice);
-        if (reflectorInjection) {
-          systemPrompt += `\n${reflectorInjection}`;
-          injectionDiagnostics.push(`reflector(${reflectorInjection.length} chars)`);
-        }
-      } else {
-        injectionDiagnostics.push(
-          `reflector:skip(mode=${grcState?.mode ?? "n/a"}, status=${grcState?.reflector.status ?? "n/a"}, hasAdvice=${Boolean(grcState?.reflector.lastAdvice)})`,
-        );
-      }
-
-      if (grcPromptEnabled && principles && config.grc.maxPrinciplesInjection > 0) {
-        const injectablePrinciples = principles.listInjectable(config.grc.maxPrinciplesInjection);
-        if (injectablePrinciples.length > 0) {
-          const injection = formatPrinciplesForInjection(injectablePrinciples);
-          if (injection) {
-            systemPrompt += `\n\n${injection}`;
-            logger?.debug(`Injected ${injectablePrinciples.length} principles (${injection.length} chars)`);
-            injectionDiagnostics.push(`principles(${injectablePrinciples.length}/${injection.length} chars)`);
-            void principles.markUsed(injectablePrinciples).catch((err) => {
-              logger?.warn("Failed to update principle usage:", err);
-            });
-          }
-        } else {
-          injectionDiagnostics.push("principles:0");
-        }
-      } else {
-        injectionDiagnostics.push(
-          `principles:skip(enabled=${Boolean(principles)}, max=${config.grc.maxPrinciplesInjection}, grcPromptEnabled=${grcPromptEnabled})`,
-        );
-      }
-
-      if (config.memory.enabled && memory) {
-        const memories = memory.search(event.prompt, 5);
-        if (memories.length > 0) {
-          const injection = memory.formatForInjection(memories, config.memory.maxInjectionTokens);
-          if (injection) {
-            systemPrompt += `\n\n${injection}`;
-            logger?.debug(`Injected ${memories.length} memories (${injection.length} chars)`);
-            injectionDiagnostics.push(`memories(${memories.length}/${injection.length} chars)`);
-          }
-        } else {
-          injectionDiagnostics.push("memories:0");
-        }
-      } else {
-        injectionDiagnostics.push(`memories:skip(enabled=${config.memory.enabled}, manager=${Boolean(memory)})`);
-      }
-
-      logger?.debug(
-        `before_agent_start injection summary: ${injectionDiagnostics.join(" | ")} | state(mode=${grcState?.mode ?? "n/a"}, runtimeMode=${grcState?.runtimeMode ?? "n/a"}, hasGoalState=${Boolean(grcState?.curator.lastGoalState)}, summaryCache=${grcState?.curator.summaryCache.length ?? 0}, lastSignal=${grcState?.curator.lastSignal?.type ?? "none"}, reflector=${grcState?.reflector.status ?? "n/a"}, curator=${grcState?.curator.status ?? "n/a"})`,
-      );
-
-      if (systemPrompt !== event.systemPrompt) {
-        return { systemPrompt };
-      }
-      return;
-    } catch (err) {
-      logger?.error("before_agent_start injection failed:", err);
-      return;
-    }
-  });
+  pi.on("before_agent_start", createBeforeAgentStartHandler({
+    getConfig: () => config,
+    getGRCState: () => grcState,
+    getPrinciples: () => principles,
+    getMemory: () => memory,
+    getCuratorPromise: () => curatorPromise,
+    getOrchestrationSuspended: () => orchestrationSuspended,
+    updateOrchestrationSuspension,
+    getSessionScopeGuardReason,
+    isCurrentSessionStateReady,
+    isRuntimeEnabled,
+    isGRCAutoProcessingAllowed,
+    startGRCBackgroundJobs,
+    logger,
+  }));
 
   // ===========================================================================
   // Context Optimization

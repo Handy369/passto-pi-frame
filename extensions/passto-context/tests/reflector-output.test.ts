@@ -67,7 +67,7 @@ test('parseReflectorOutput prefers structured diagnosis from v2 reflector format
     '    "explanation": "本轮工作聚焦于 Batch 1 兼容升级。"',
     '  },',
     '  "principleOps": [',
-    '    { "op": "reuse", "targetId": "principle_batch_compat" }',
+    '    { "op": "hit", "targetId": "principle_batch_compat" }',
     '  ],',
     '  "assetCandidates": [',
     '    {',
@@ -94,7 +94,7 @@ test('parseReflectorOutput prefers structured diagnosis from v2 reflector format
     evidence: ['改动仅涉及 Reflector prompt、types 与 parser。', '未修改 GoalState 写入链。'],
     explanation: '本轮工作聚焦于 Batch 1 兼容升级。',
   });
-  assert.deepEqual(result.principleOps, [{ op: 'reuse', targetId: 'principle_batch_compat' }]);
+  assert.deepEqual(result.principleOps, [{ op: 'hit', targetId: 'principle_batch_compat' }]);
   assert.deepEqual(result.assetCandidates, [
     {
       type: 'reference',
@@ -138,6 +138,134 @@ test('parseReflectorOutput falls back when trailing json is invalid', () => {
   assert.deepEqual(result.principleOps, []);
   assert.equal(result.hasSubstantiveContent, true);
   assert.match(result.advice, /继续保持 parser 的兼容回退/);
+});
+
+test('parseReflectorOutput supports expand op in structured reflector format', () => {
+  const raw = [
+    '## 目标对齐判断',
+    '当前执行基本对齐。',
+    '',
+    '## 偏移归因',
+    '- 无明显偏移。',
+    '',
+    '## 顾问意见',
+    '- 命中旧原则后再扩写。',
+    '',
+    '## 原则判断',
+    '- 现有原则需要更完整表达。',
+    '',
+    '## 能力沉淀候选',
+    '无',
+    '',
+    '```json',
+    '{',
+    '  "principleOps": [',
+    '    { "op": "expand", "targetId": "principle_expand_me", "content": "先验证真实工具结果，再下结论。", "tags": ["verification"] }',
+    '  ]',
+    '}',
+    '```',
+  ].join('\n');
+
+  const result = parseReflectorOutput(raw);
+  assert.ok(result);
+  assert.deepEqual(result.principleOps, [
+    { op: 'expand', targetId: 'principle_expand_me', content: '先验证真实工具结果，再下结论。', tags: ['verification'] },
+  ]);
+});
+
+test('parseReflectorOutput rejects append-style expand content', () => {
+  const raw = [
+    '## 目标对齐判断',
+    '当前执行基本对齐。',
+    '',
+    '## 偏移归因',
+    '- 无明显偏移。',
+    '',
+    '## 顾问意见',
+    '- 不要把新约束补丁式追加到旧原则尾部。',
+    '',
+    '## 原则判断',
+    '- 这条 expand 应被拒绝。',
+    '',
+    '## 能力沉淀候选',
+    '无',
+    '',
+    '```json',
+    '{',
+    '  "principleOps": [',
+    '    { "op": "expand", "targetId": "principle_expand_me", "content": "先验证真实工具结果，再下结论。新增：输出前检查路径是否存在。", "tags": ["verification"] }',
+    '  ]',
+    '}',
+    '```',
+  ].join('\n');
+
+  const result = parseReflectorOutput(raw);
+  assert.ok(result);
+  assert.deepEqual(result.principleOps, []);
+});
+
+test('parseReflectorOutput rejects create content with scene-specific names', () => {
+  const raw = [
+    '## 目标对齐判断',
+    '当前执行基本对齐。',
+    '',
+    '## 偏移归因',
+    '- 无明显偏移。',
+    '',
+    '## 顾问意见',
+    '- 这类带专名的经验应转去 assetCandidates。',
+    '',
+    '## 原则判断',
+    '- 这条 create 应被拒绝。',
+    '',
+    '## 能力沉淀候选',
+    '无',
+    '',
+    '```json',
+    '{',
+    '  "principleOps": [',
+    '    { "op": "create", "content": "修改 before-agent-start-event.ts 时应优先核对 ReflectorAPI 的事件名再继续。", "tags": ["verification"] }',
+    '  ]',
+    '}',
+    '```',
+  ].join('\n');
+
+  const result = parseReflectorOutput(raw);
+  assert.ok(result);
+  assert.deepEqual(result.principleOps, []);
+});
+
+test('parseReflectorOutput keeps generic create content without scene-specific names', () => {
+  const raw = [
+    '## 目标对齐判断',
+    '当前执行基本对齐。',
+    '',
+    '## 偏移归因',
+    '- 无明显偏移。',
+    '',
+    '## 顾问意见',
+    '- 只保留跨任务复用的泛化约束。',
+    '',
+    '## 原则判断',
+    '- 这条 create 可以保留。',
+    '',
+    '## 能力沉淀候选',
+    '无',
+    '',
+    '```json',
+    '{',
+    '  "principleOps": [',
+    '    { "op": "create", "content": "在把局部经验上升为长期规则前，先验证它是否脱离特定场景仍成立。", "tags": ["generalization"] }',
+    '  ]',
+    '}',
+    '```',
+  ].join('\n');
+
+  const result = parseReflectorOutput(raw);
+  assert.ok(result);
+  assert.deepEqual(result.principleOps, [
+    { op: 'create', content: '在把局部经验上升为长期规则前，先验证它是否脱离特定场景仍成立。', tags: ['generalization'] },
+  ]);
 });
 
 test('parseReflectorOutput ignores invalid diagnosis schema but keeps valid principleOps', () => {

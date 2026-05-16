@@ -38,6 +38,8 @@ function createModel(): PrinciplesReviewModel {
         tags: ['quality'],
         metadata: {
           lifecycle: 'active',
+          origin: 'manual',
+          promoted: true,
           activeScore: 10,
           hintCount: 10,
           lastHintedAt: '2026-05-12T11:00:00.000Z',
@@ -56,6 +58,8 @@ function createModel(): PrinciplesReviewModel {
         tags: ['legacy'],
         metadata: {
           lifecycle: 'archived',
+          origin: 'reflector',
+          promoted: false,
           activeScore: 1,
           hintCount: 1,
           lastHintedAt: '2026-05-12T11:05:00.000Z',
@@ -89,6 +93,10 @@ test('renderPrinciplesReviewHtml renders embedded model and core review controls
   assert.match(html, /disable/);
   assert.match(html, /__REVIEW_MODEL__/);
   assert.match(html, /修改文件后必须验证结果/);
+  assert.match(html, /origin: manual/);
+  assert.match(html, /origin: reflector/);
+  assert.match(html, /promoted: yes/);
+  assert.match(html, /promoted: no/);
 });
 
 test('renderPrinciplesReviewHtml safely escapes dangerous content in embedded model', () => {

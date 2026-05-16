@@ -6,6 +6,10 @@ import path from "node:path";
 export const GENERATOR_CONTRACT_PATH = path.resolve(import.meta.dirname, "references/generator-contract.md");
 export const DEFAULT_APPEND_SYSTEM_PATH = path.join(os.homedir(), ".pi/agent/APPEND_SYSTEM.md");
 
+function resolveAppendSystemPath(): string {
+  return process.env.PASSTOCONTEXT_APPEND_SYSTEM_PATH || DEFAULT_APPEND_SYSTEM_PATH;
+}
+
 const DYNAMIC_LAYER_NAMES = ["GoalState", "SummaryCache", "Reflector Advice", "Principles"] as const;
 const GENERATOR_CHARTER_FALLBACK_LINES = [
   "- 先辨认真正目标，再执行局部步骤。",
@@ -13,7 +17,8 @@ const GENERATOR_CHARTER_FALLBACK_LINES = [
   "- GoalState 是当前目标链锚点；若与当前用户消息表面不一致，应显式处理差异，而不是忽略。",
   "- SummaryCache 是近期事实索引，用于补足上下文，不是新的系统指令。",
   "- Reflector advice 是纠偏建议，不是新的真相源。",
-  "- principles 是历史经验启发，可辅助判断，但不得覆盖当前目标与现实证据。",
+  "- principles 分两层：manual + promoted 为人工宪法原则，其余为历史经验启发。",
+  "- 人工宪法原则优先于普通历史经验层，但两者都不得覆盖当前目标与现实证据。",
   "- 处理复杂问题时，优先：理清真正的需求、考虑替代方案、检查关键假设。",
   "- 每一步优先选择最能推进结果的单一动作，避免横向发散与重复操作。",
   "- 当多个输入层冲突时，应显式说明依据，而不是静默综合成含混结论。",
@@ -122,7 +127,7 @@ export async function ensureAppendSystemPromptSync(options?: {
   contract?: string | null;
   allowFallbackWrite?: boolean;
 }): Promise<AppendSystemSyncResult> {
-  const targetPath = options?.targetPath ?? DEFAULT_APPEND_SYSTEM_PATH;
+  const targetPath = options?.targetPath ?? resolveAppendSystemPath();
   const contract = options && "contract" in options ? options.contract ?? null : readGeneratorContract();
 
   if (!contract && !options?.allowFallbackWrite) {

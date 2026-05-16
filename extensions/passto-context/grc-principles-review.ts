@@ -20,6 +20,8 @@ export interface PrinciplesReviewItem {
   tags: string[];
   metadata: {
     lifecycle: PrincipleLifecycle;
+    origin: 'reflector' | 'manual';
+    promoted: boolean;
     activeScore: number;
     hintCount: number;
     lastHintedAt?: string;
@@ -271,6 +273,8 @@ function toReviewItem(item: PrincipleItem): PrinciplesReviewItem {
     tags: [...item.tags],
     metadata: {
       lifecycle,
+      origin: item.metadata.origin === 'manual' ? 'manual' : 'reflector',
+      promoted: item.metadata.promoted === true,
       activeScore: item.metadata.activeScore ?? item.metadata.hintCount ?? item.metadata.hitCount ?? 0,
       hintCount: item.metadata.hintCount ?? item.metadata.hitCount ?? 0,
       lastHintedAt: item.metadata.lastHintedAt,
