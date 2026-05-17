@@ -1,0 +1,69 @@
+{
+  "name": "@mjakl/pi-subagent",
+  "version": "1.4.1",
+  "description": "Subagent extension for Pi coding agent. Delegate tasks to runtime agent profiles.",
+  "type": "module",
+  "main": "index.ts",
+  "files": [
+    "index.ts",
+    "render.ts",
+    "types.ts",
+    "runtime-profiles.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "pi",
+    "subagent",
+    "delegation",
+    "pi-package"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mjakl/pi-subagent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mjakl/pi-subagent/issues"
+  },
+  "homepage": "https://github.com/mjakl/pi-subagent#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.2.3",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.37.0",
+    "@earendil-works/pi-ai": ">=0.37.0",
+    "@earendil-works/pi-coding-agent": ">=0.37.0",
+    "@earendil-works/pi-tui": ">=0.37.0",
+    "typebox": ">=0.34.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-agent-core": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@earendil-works/pi-tui": {
+      "optional": true
+    },
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  }
+}
