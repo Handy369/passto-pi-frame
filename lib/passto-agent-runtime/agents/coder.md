@@ -1,7 +1,7 @@
 ---
 name: coder
 description: Isolated coding agent for implementing extension code from a fixed spec and implementation contract.
-model: PASSTOAI-TW/HubTo-TW/qwen3.6-plus
+model: PASSTOAI-TW/HubTo-TW/gpt-5.4
 thinking: low
 tools:
   - read

@@ -156,6 +156,7 @@ const result = await runSubagent({
 推荐：
 - review 场景优先用 `agent: "reviewer"`
 - 通用场景可用 `agent: "default"`
+- 受控 benchmark / A/B / 消融实验执行优先用 `agent: "experimenter"`
 - Ralph loop 场景可用 `agent: "ralph-executor"`
 
 说明：当 child 需要精确控制自己的 extension surface 时，可设置 `inheritParentExtensions: false`，避免父进程 `--extension` 参数被继续透传到 child。

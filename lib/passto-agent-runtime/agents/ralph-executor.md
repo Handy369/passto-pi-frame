@@ -1,7 +1,7 @@
 ---
 name: ralph-executor
 description: Execute multi-iteration development tasks through the Ralph Wiggum loop with real tool-backed iteration control.
-model: PASSTOAI-TW/HubTo-TW/qwen3.6-plus
+model: PASSTOAI-TW/HubTo-TW/gpt-5.4
 thinking: low
 sessionMode: spawn
 timeoutMs: 900000

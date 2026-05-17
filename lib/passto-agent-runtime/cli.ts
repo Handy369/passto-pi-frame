@@ -191,8 +191,6 @@ export function normalizeThinkingLevel(level: string | undefined): string | unde
   if (!level) return undefined;
   const normalized = level.trim().toLowerCase();
   if (!normalized) return undefined;
-  if (normalized === "minimal") return "low";
-  if (normalized === "xhigh") return "high";
   return normalized;
 }
 

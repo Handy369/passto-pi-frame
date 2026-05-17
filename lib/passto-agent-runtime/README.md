@@ -70,6 +70,7 @@
 - `default`
 - `reviewer`
 - `coder`
+- `experimenter`（用于按固定 experiment brief 执行 benchmark / A/B / 消融实验，并回收 artifacts）
 - `ralph-executor`（用于默认注入 `ralph-wiggum`，供 `pi-subagent` 在 Ralph loop 场景下使用）
 
 ---
@@ -200,9 +201,7 @@
 ### 模型与 thinking
 - `model` → `--model`
 - `thinking` → `--thinking`
-- 兼容映射：
-  - `minimal -> low`
-  - `xhigh -> high`
+- 当前行为：原样透传 Pi 官方 thinking level（如 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`）
 
 ### 工具
 - `tools` → `--tools a,b,c`

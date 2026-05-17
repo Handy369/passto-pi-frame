@@ -148,6 +148,49 @@ async function runReviewWithProfile(args: {
 
 ---
 
+## 示例 1.6：直接使用 `agent: "experimenter"` 执行实验 brief
+
+适用场景：
+- 已有 `agents/experimenter.md`
+- 父 agent 已在 `program.md` 中写好 experiment brief 或可直接传入自包含 brief
+- 希望 child 在固定 edit surface 内执行实验并回收结果
+
+```ts
+import {
+  runSubagent,
+  renderProgressUpdate,
+  renderFinalResult,
+} from "/Users/handy/.pi/agent/lib/passto-agent-runtime/index.ts";
+
+async function runExperimentBrief(args: {
+  cwd: string;
+  prompt: string;
+}, signal: AbortSignal | undefined, onUpdate: ((partial: any) => void) | undefined) {
+  const result = await runSubagent(
+    {
+      agent: "experimenter",
+      prompt: args.prompt,
+      cwd: args.cwd,
+    },
+    {
+      onProgress(progress) {
+        onUpdate?.(renderProgressUpdate(progress));
+      },
+    },
+    signal,
+  );
+
+  return renderFinalResult(result);
+}
+```
+
+说明：
+- `agent: "experimenter"` 会加载 `agents/experimenter.md`
+- 适合 benchmark / routing / A/B / 消融实验这类“先有 brief，再受控执行”的 child task
+- 建议父 agent 先在 `program.md` 中维护 `Delegated Execution Contract` 与 `Subagent execution brief template`
+
+---
+
 ## 示例 2：只读 research 子任务
 
 适用场景：
