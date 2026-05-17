@@ -1,7 +1,7 @@
 # PasstoContext Skill Explore / Runtime Proof 插件设计
 
 > 版本：v1.1  
-> 状态：implemented  
+> 状态：v1.1 收口完成；v1.2 最小闭环已落地，扩展项待继续  
 > 更新：2026-05-17
 
 ---
@@ -20,18 +20,32 @@
 2. 用最小宿主侵入方式验证 **top-agent / subagent Skill 读取都能被观测到**
 3. 暂不承担 `summaryEntry join`、跨 session aggregate、opportunity hypothesis、benchmark handoff 等更高层能力
 
-也就是说，v1.1 当前已完成的是：
+为避免版本口径继续混淆，本文自此固定区分三件事：
 
+- **v1.1 收口目标**：已完成
+- **当前代码基线**：已在不回退 v1.1 的前提下，补入 v1.2 的最小 handoff / consumption-proof 闭环
+- **后续未完成项**：除非特别标注，均指 v1.2 扩展项，不再作为“v1.1 未完成”表述
+
+也就是说：
+
+**v1.1 已完成的是：**
 - **L0：Observed Usage Facts**
 - **部分运行态 surface：widget 统计回显**
 - **真实 runtime-proof 闭环：top-agent / subagent 双场景验证通过**
 
-尚未完成的是：
+**当前代码基线进一步已落地的是：**
+- `SkillUsageFact` / `SkillAggregateSummary` / aggregate 落盘
+- `SkillReviewBundle` / `BundleReceipt` / ready-reviewed 索引
+- ready bundle 主动扫描与选择策略：`target skill -> newer -> richer signals`
+- `ready -> bundle -> receipt` 的真实 consumption proof
+- `/ptc skills status|ready|reviewed|aggregate|export` 命令面
+- `skill-review-model.json` / `review.html` 导出 surface
 
+**仍未完成的是 v1.2 扩展项：**
 - `summaryEntry + skill read` join
 - cross-session task-shape aggregate
 - opportunity hypotheses
-- `/ptc skills ...` 命令面
+- write-back review workflow / Outcome Proof 完整闭环
 
 ---
 
@@ -95,32 +109,43 @@ v1.1 的 `skill-explore` 就是为这个目标收敛的。
 
 ### 3.2 当前主输出物
 
-当前实现只产出三类 artifact：
+当前实现已形成四层 artifact，加一个运行态 UI 指标：
 
-1. `round-skill-usage-facts.json`
-   - 当前 session 的按轮事实
-2. `skill-explore-summary.json`
-   - 当前 session 的总览汇总
-3. `latest/latest-session.json`
-   - 最新一次持久化 session 的索引入口
+1. **L0：session-scoped runtime evidence**
+   - `round-skill-usage-facts.json`
+   - `skill-explore-summary.json`
+   - `latest/latest-session.json`
+2. **L1/L2：aggregate / review-input 层**
+   - `joins/skill-usage-facts/*.jsonl`
+   - `aggregates/.../summary.json`
+   - `aggregates/.../task-shapes.json`
+   - `aggregates/.../evidence-index.json`
+3. **L3：handoff / consumption-proof 层**
+   - `handoff/skills-maker/bundles/*.json`
+   - `handoff/skills-maker/receipts/*.json`
+   - `handoff/skills-maker/indexes/ready.json`
+   - `handoff/skills-maker/indexes/reviewed.json`
+4. **L4：review export surface**
+   - `exports/<timestamp>[-<target-skill>]/skill-review-model.json`
+   - `exports/<timestamp>[-<target-skill>]/review.html`
 
 以及一个运行态 UI 指标：
 
-4. widget `记:<principlesExtracted>+<skillReadCount>`
+5. widget `记:<principlesExtracted>+<skillReadCount>`
 
 ---
 
 ### 3.3 当前明确不做
 
-以下能力**不是 v1.1 当前实现面**：
+以下能力当前**仍不是已完成实现面**：
 
 - 不做 should-hit / should-not-hit verdict
 - 不做 effective / harmful 归因
 - 不把结果注入主 prompt
 - 不接管 Curator / Reflector 职责
-- 不落地独立 warehouse / aggregate / handoff 目录
-- 不提供 `/ptc skills warehouse ...` 命令面
-- 不自动生成 benchmark bundle
+- 不自动改 Skill 文件
+- 不提供写回型 review workflow（如 decision import / adopt / approve）
+- 不自动生成 benchmark 裁决 / 完整 dashboard
 
 ---
 
@@ -309,15 +334,15 @@ interface SkillExploreRuntimeSnapshot {
 
 ### 7.3 设计含义
 
-- `sessions/<sessionKey>/...`：保存 session 粒度事实
+- `sessions/<sessionKey>/...`：保存 v1.1 最小基线所需的 session 粒度事实
 - `latest/latest-session.json`：提供最新一次持久化的定位入口
-- 当前没有 `facts/*.jsonl` / `aggregates/*.json` / `handoff/*.json`
+- 当前实现已在这一基线之上补入 `joins/`、`aggregates/` 与 `handoff/skills-maker/` 三层目录，用于 v1.2 最小闭环
 
-这代表 v1.1 当前仍是：
+这代表当前代码基线应被理解为：
 
-> **session-scoped runtime-proof artifact 层**
+> **v1.1 的 session-scoped runtime-proof 基线 + v1.2 的最小 handoff / consumption-proof 层**
 
-而不是跨 session warehouse 层。
+而不是“只剩 session-scoped artifact”或“已经完成全部 Skill Intelligence 扩展”。
 
 ---
 
@@ -514,8 +539,13 @@ Run:11 7.5k | 记:28+4 | 思:✓ | 理:✓
 - `SkillUsageFact` / `SkillAggregateSummary` / aggregate 落盘
 - `SkillReviewBundle` / `BundleReceipt` / ready-reviewed 索引
 - 真实 P4：bundle → `skills-maker` 消费 → 输出文档 → receipt 闭环验证
+- ready bundle 选择策略：`target skill -> newer -> richer signals`
+- read-ready 脚本输出：`--format json | markdown`
+- `/ptc skills status|ready|reviewed|aggregate|export` 命令面
+- `skill-review-model.json` / `review.html` 导出 surface
+- selection 口径已同步到脚本 / 测试 / proof 文档 / README
 
-### 10.2 未完成
+### 10.2 v1.2 仍未完成的扩展项（不阻断 v1.1 收口）
 
 - `summaryEntry` join
 - `SkillUsageFact` 语义层升级
@@ -524,8 +554,8 @@ Run:11 7.5k | 记:28+4 | 思:✓ | 理:✓
 - task-shape / cluster
 - opportunity hypothesis
 - benchmark handoff bundle
-- review HTML / export surface
-- `/ptc skills ...` 命令面
+- write-back review workflow（如 decision import / adopt / approve）
+- Outcome Proof 完整闭环
 
 ### 10.3 新增收敛：自动产 bundle（当前实现口径）
 
@@ -1694,6 +1724,11 @@ v1.2 建议保持以下原则：
 ---
 
 ## 13. 最终结论
+
+截至 2026-05-17，本文档的版本状态应明确理解为：
+
+- **v1.1：收口完成**
+- **v1.2：最小闭环已落地，但扩展项仍在继续**
 
 v1.1 的 `skill-explore` 已经从早期“Skill Intelligence warehouse 设想”收敛为一个更小但更扎实的实现：
 
