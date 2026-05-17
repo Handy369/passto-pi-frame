@@ -145,6 +145,9 @@ function makeCtx() {
           },
         ];
       },
+      getSessionFile() {
+        return '/tmp/active-session.jsonl';
+      },
     },
   };
 }
@@ -171,7 +174,7 @@ function makeMemory(content: string): MemoryItem {
   };
 }
 
-test('buildBeforeAgentStartPrompt composes runtime injections end-to-end for before_agent_start', () => {
+test('buildBeforeAgentStartPrompt composes runtime injections end-to-end for before_agent_start', async () => {
   const principles = {
     listInjectable(limit: number) {
       return limit > 0 ? [makePrinciple('复杂任务应优先验证关键假设，而不是连续重复试错。')] : [];
@@ -191,7 +194,7 @@ test('buildBeforeAgentStartPrompt composes runtime injections end-to-end for bef
     },
   };
 
-  const result = buildBeforeAgentStartPrompt({
+  const result = await buildBeforeAgentStartPrompt({
     event: {
       prompt: '请继续排查 before_agent_start 注入链',
       systemPrompt: 'BASE SYSTEM',
@@ -212,6 +215,7 @@ test('buildBeforeAgentStartPrompt composes runtime injections end-to-end for bef
   assert.match(result.systemPrompt, /Agent Round 2/);
   assert.doesNotMatch(result.systemPrompt, /Agent Round 4/);
   assert.match(result.systemPrompt, /ptc_search_summary/);
+  assert.match(result.systemPrompt, /parentSession lineage/);
   assert.match(result.systemPrompt, /顾问意见/);
   assert.match(result.systemPrompt, /先验证 restore → warehouse → search 链路/);
   assert.match(result.systemPrompt, /经验原则（来自历史会话）/);
@@ -233,12 +237,12 @@ test('buildBeforeAgentStartPrompt composes runtime injections end-to-end for bef
   assert.equal(result.injectedMemories[0]?.id, 'memory-1');
 });
 
-test('buildBeforeAgentStartPrompt records skip diagnostics when runtime injections are disabled or unavailable', () => {
+test('buildBeforeAgentStartPrompt records skip diagnostics when runtime injections are disabled or unavailable', async () => {
   const config = makeConfig();
   config.grc.enabled = false;
   config.memory.enabled = false;
 
-  const result = buildBeforeAgentStartPrompt({
+  const result = await buildBeforeAgentStartPrompt({
     event: {
       prompt: 'noop',
       systemPrompt: 'BASE',
@@ -253,6 +257,9 @@ test('buildBeforeAgentStartPrompt records skip diagnostics when runtime injectio
       sessionManager: {
         getBranch() {
           return [];
+        },
+        getSessionFile() {
+          return '/tmp/skip.jsonl';
         },
       },
     },

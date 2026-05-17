@@ -54,6 +54,7 @@ const DEFAULT_GRC: GRCConfig = {
   maxPrinciples: 100,
   orchestratorToolPrefixes: ["passto_planner_", "passto_executor_", "passto_builder_"],
   widgetNoticeMaxChars: 24,
+  lineageSummaryMaxDepth: 8,
 };
 
 const DEFAULT_LOG_ENABLED = true;
@@ -230,6 +231,9 @@ export function validateConfig(config: PasstoContextConfig): string[] {
   }
   if (config.grc.widgetNoticeMaxChars < 8) {
     errors.push("grc.widgetNoticeMaxChars must be >= 8");
+  }
+  if (config.grc.lineageSummaryMaxDepth < 0) {
+    errors.push("grc.lineageSummaryMaxDepth must be >= 0");
   }
   if (!config.grc.subagentModel) {
     errors.push("grc.subagentModel is required");

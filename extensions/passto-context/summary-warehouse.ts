@@ -15,6 +15,25 @@ function cloneSummaryEntry(entry: SummaryEntry): SummaryEntry {
   return JSON.parse(JSON.stringify(entry)) as SummaryEntry;
 }
 
+export function getSummaryEntrySourceKey(entry: SummaryEntry): string {
+  const sourceFile = entry.sessionFile ?? entry.sessionPointers?.file ?? "unknown-session";
+  return `${sourceFile}::${entry.agentRound}`;
+}
+
+export function dedupeSummaryEntries(entries: SummaryEntry[]): SummaryEntry[] {
+  const latestBySource = new Map<string, SummaryEntry>();
+
+  for (const entry of entries) {
+    latestBySource.set(getSummaryEntrySourceKey(entry), cloneSummaryEntry(entry));
+  }
+
+  return [...latestBySource.values()].sort((a, b) => a.agentRound - b.agentRound);
+}
+
+export function mergeSummaryWarehouses(...lists: SummaryEntry[][]): SummaryEntry[] {
+  return dedupeSummaryEntries(lists.flat());
+}
+
 function isSummaryEntry(value: unknown): value is SummaryEntry {
   return !!value && typeof value === "object" && typeof (value as SummaryEntry).agentRound === "number";
 }
@@ -98,13 +117,7 @@ export function extractSummaryEntriesFromBranch<T extends BranchEntryLike>(branc
 }
 
 export function buildSessionSummaryWarehouse<T extends BranchEntryLike>(branch: T[]): SummaryEntry[] {
-  const latestByRound = new Map<number, SummaryEntry>();
-
-  for (const entry of extractSummaryEntriesFromBranch(branch)) {
-    latestByRound.set(entry.agentRound, entry);
-  }
-
-  return [...latestByRound.values()].sort((a, b) => a.agentRound - b.agentRound);
+  return dedupeSummaryEntries(extractSummaryEntriesFromBranch(branch));
 }
 
 export function searchSessionSummaryWarehouse(

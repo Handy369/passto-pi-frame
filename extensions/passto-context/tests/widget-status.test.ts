@@ -15,8 +15,8 @@ test('appendWidgetNotice appends active transient notice to widget status', () =
     expiresAt: 6_000,
   };
 
-  const text = appendWidgetNotice('Run:0 126.0k | 记:0 | 思:✗ | 理:✓', notice, 24, 1_000);
-  assert.equal(text, 'Run:0 126.0k | 记:0 | 思:✗ | 理:✓ | 梳理完成 + 目标更新');
+  const text = appendWidgetNotice('Run:0 126.0k | 记:0+0 | 思:✗ | 理:✓', notice, 24, 1_000);
+  assert.equal(text, 'Run:0 126.0k | 记:0+0 | 思:✗ | 理:✓ | 梳理完成 + 目标更新');
 });
 
 test('appendWidgetNotice omits expired transient notice after 5 seconds window', () => {
@@ -25,8 +25,8 @@ test('appendWidgetNotice omits expired transient notice after 5 seconds window',
     expiresAt: 5_000,
   };
 
-  const text = appendWidgetNotice('Run:0 126.0k | 记:0 | 思:✗ | 理:✓', notice, 24, 5_000);
-  assert.equal(text, 'Run:0 126.0k | 记:0 | 思:✗ | 理:✓');
+  const text = appendWidgetNotice('Run:0 126.0k | 记:0+0 | 思:✗ | 理:✓', notice, 24, 5_000);
+  assert.equal(text, 'Run:0 126.0k | 记:0+0 | 思:✗ | 理:✓');
   assert.equal(isWidgetNoticeActive(notice, 5_000), false);
 });
 

@@ -39,6 +39,7 @@ import { ensureAppendSystemPromptSync } from "./grc-generator-contract.ts";
 import { buildReflectorGoalContext } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
 import { formatReflectorDiagnosisLabel } from "./grc-reflector-diagnosis.ts";
+import { detectExternalOrchestratorFromBranch } from "./orchestrator-guard.ts";
 import { buildReflectorInput } from "./grc-reflector-input.ts";
 import { getSessionStateGuardReason, isSessionStateReady, normalizeSessionFile } from "./grc-session-guard.ts";
 import { createPrinciplesManager, formatPrinciplesForInjection } from "./grc-principles.js";
@@ -47,22 +48,28 @@ import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
 import { formatPTCStatus } from "./ptc-status.ts";
 import { getPTCUsageText, handlePTCPrinciplesReviewCommand } from "./ptc-principles-review-command.ts";
+import { normalizePTCSubcommand } from "./ptc-command-routing.ts";
 import { appendWidgetNotice, getVisibleWidgetNotice, type WidgetNoticeState } from "./widget-status.ts";
 import {
   getCurrentAgentRoundEntries,
-  getLatestUserMessageText,
-  getPreviousAgentRoundEntries,
-  getRecentAgentRoundMessages,
-  getSlidingWindowAgentRoundMessages,
   mergeRecentAgentRoundMessagesWithContext,
-  resolveAgentRoundEntryRange,
-  serializeCurrentAgentRoundConversation,
-  serializePreviousAgentRoundConversation,
 } from "./grc-context-manager.js";
 import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, ReflectorArtifactEntry, SessionState, SummaryEntry } from "./types.js";
+import {
+  getCachedBranch,
+  getCachedLatestUserMessageText,
+  getCachedPreviousAgentRoundEntries,
+  getCachedRecentAgentRoundMessages,
+  getCachedResolveAgentRoundEntryRange,
+  getCachedSlidingWindowAgentRoundMessages,
+  invalidateBranchRuntimeCache,
+  serializeCachedCurrentAgentRoundConversation,
+  serializeCachedPreviousAgentRoundConversation,
+} from "./branch-runtime-cache.ts";
 import { hydrateSummaryEntrySessionContext } from "./summary-warehouse.js";
-import { executeSummarySearchTool, getSessionSummaryWarehouseEntries } from "./runtime-summary-search.js";
+import { executeSummarySearchTool, getSessionSummaryWarehouseEntries, getLineageSummaryWarehouseEntries } from "./runtime-summary-search.js";
 import { createBeforeAgentStartHandler } from "./before-agent-start-event.ts";
+import { formatSkillProofMetric, getSkillExploreRuntimeSnapshotFromBranch, runSkillExploreAgentEndBridge } from "./plugin/skill-explore/index.ts";
 
 // =============================================================================
 // Module State (module-level singleton for the extension lifetime)
@@ -90,6 +97,7 @@ let widgetNotice: WidgetNoticeState | null = null;
 let orchestrationSuspended = false;
 let orchestrationReason = "";
 let principlesCuratorRunning = false;
+let skillReadCountCurrentSession = 0;
 let currentRun: CurrentRunState = createInitialCurrentRunState();
 
 type GRCJobTargets = "reflector" | "curator";
@@ -225,10 +233,7 @@ function appendReflectorArtifactEntry(pi: ExtensionAPI, entry: ReflectorArtifact
 }
 
 function resolveSummaryEntryRange(ctx: ExtensionContext, agentRound: number): SummaryEntry["sessionEntryRange"] | undefined {
-  return resolveAgentRoundEntryRange(
-    ctx.sessionManager.getBranch() as Array<{ type?: string; customType?: string; data?: unknown; message?: unknown }>,
-    agentRound,
-  ) ?? undefined;
+  return getCachedResolveAgentRoundEntryRange(ctx, agentRound) ?? undefined;
 }
 
 function hydrateSummaryEntryForSession(
@@ -343,7 +348,7 @@ function formatWidgetStatus(ctx: ExtensionContext, state: SessionState | null, g
   parts.push(`${runLabel} ${contextUsageLabel}`);
 
   const sessionCreated = principles?.getDiagnostics().audit.effects.created ?? 0;
-  parts.push(`记:${sessionCreated}`);
+  parts.push(formatSkillProofMetric(sessionCreated, skillReadCountCurrentSession));
   parts.push(`思:${formatSubagentRuntime(getEffectiveReflectorStatus(), reflectorStartedAt)}`);
   parts.push(`理:${formatSubagentRuntime(getEffectiveCuratorStatus(), curatorStartedAt)}`);
 
@@ -374,6 +379,7 @@ function setTransientGRCStatus(ctx: ExtensionContext, text: string): void {
 }
 
 function resetModuleState(): void {
+  invalidateBranchRuntimeCache();
   sessionActive = false;
   config = null;
   logger = null;
@@ -398,6 +404,7 @@ function resetModuleState(): void {
   orchestrationSuspended = false;
   orchestrationReason = "";
   principlesCuratorRunning = false;
+  skillReadCountCurrentSession = 0;
   currentRun = createInitialCurrentRunState();
 }
 
@@ -448,38 +455,11 @@ function detectExternalOrchestrator(ctx: ExtensionContext): { suspended: boolean
     return { suspended: false, reason: "" };
   }
 
-  const prefixes = config.grc.orchestratorToolPrefixes ?? [];
-  if (prefixes.length === 0) {
-    return { suspended: false, reason: "" };
-  }
-
-  const branch = ctx.sessionManager.getBranch();
-  for (let i = branch.length - 1; i >= 0; i--) {
-    const entry = branch[i];
-    if (entry.type !== "message") continue;
-    const message = entry.message as { toolName?: string; content?: Array<{ type?: string; name?: string }> } | undefined;
-    const toolNames = new Set<string>();
-    if (message?.toolName) {
-      toolNames.add(message.toolName);
-    }
-    for (const block of message?.content ?? []) {
-      if (block?.type === "toolCall" && typeof block.name === "string") {
-        toolNames.add(block.name);
-      }
-    }
-
-    for (const toolName of toolNames) {
-      const matchedPrefix = prefixes.find((prefix) => toolName.startsWith(prefix));
-      if (matchedPrefix) {
-        return {
-          suspended: true,
-          reason: `检测到外部编排流程：${toolName}`,
-        };
-      }
-    }
-  }
-
-  return { suspended: false, reason: "" };
+  return detectExternalOrchestratorFromBranch(
+    getCachedBranch(ctx),
+    config.grc.orchestratorToolPrefixes ?? [],
+    200,
+  );
 }
 
 function updateOrchestrationSuspension(ctx: ExtensionContext): void {
@@ -559,8 +539,10 @@ export default function (pi: ExtensionAPI) {
       limit: Type.Optional(Type.Number({ description: "Maximum number of hits to return", default: 5, minimum: 1, maximum: 20 })),
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const result = executeSummarySearchTool(params, ctx);
-      logger?.debug(`ptc_search_summary hits=${result.details.hits.length} query=${JSON.stringify(params.query)} warehouse=${result.details.totalWarehouseEntries}`);
+      const result = await executeSummarySearchTool(params, ctx, {
+        lineageSummaryMaxDepth: config?.grc.lineageSummaryMaxDepth ?? 8,
+      });
+      logger?.debug(`ptc_search_summary hits=${result.details.hits.length} query=${JSON.stringify(params.query)} warehouse=${result.details.totalWarehouseEntries} scope=${result.details.searchScope}`);
       return result;
     },
   });
@@ -707,8 +689,8 @@ export default function (pi: ExtensionAPI) {
     const targetPreviousAgentRound = grcState.totalAgentRounds;
     const userTurnAtStart = getCurrentUserTurnCount();
 
-    const branch = ctx.sessionManager.getBranch();
-    const reflectorConversation = serializeCurrentAgentRoundConversation(branch, (entries) =>
+    const branch = getCachedBranch(ctx);
+    const reflectorConversation = serializeCachedCurrentAgentRoundConversation(ctx, (entries) =>
       serializeConversation(entries, {
         maxTokens: 16000,
         preserveFirstUserMessage: true,
@@ -717,7 +699,7 @@ export default function (pi: ExtensionAPI) {
         toolResultMaxChars: 1000,
       })
     );
-    const previousRoundConversation = serializePreviousAgentRoundConversation(branch, (entries) =>
+    const previousRoundConversation = serializeCachedPreviousAgentRoundConversation(ctx, (entries) =>
       serializeConversation(entries, {
         maxTokens: 16000,
         preserveFirstUserMessage: true,
@@ -726,8 +708,8 @@ export default function (pi: ExtensionAPI) {
         toolResultMaxChars: 1000,
       })
     );
-    const currentUserMessage = getLatestUserMessageText(branch);
-    const previousAgentRoundMessageCount = getPreviousAgentRoundEntries(branch).length;
+    const currentUserMessage = getCachedLatestUserMessageText(ctx);
+    const previousAgentRoundMessageCount = getCachedPreviousAgentRoundEntries(ctx).length;
     const reflectorGoalState = grcState.curator.lastGoalState;
     const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
     const reflectorInput = buildReflectorInput({
@@ -979,6 +961,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (_event, ctx) => {
     try {
+      invalidateBranchRuntimeCache();
       // Load or create configuration
       sessionActive = true;
       sessionGeneration += 1;
@@ -1005,7 +988,10 @@ export default function (pi: ExtensionAPI) {
       }
 
       // Restore any persisted state from previous session
-      for (const entry of ctx.sessionManager.getBranch()) {
+      const branch = getCachedBranch(ctx);
+      const restoredSkillRuntime = getSkillExploreRuntimeSnapshotFromBranch(branch, activeSessionFile);
+      skillReadCountCurrentSession = restoredSkillRuntime.skillReadCount;
+      for (const entry of branch) {
         if (entry.type === "custom" && entry.customType === "passto-context-state") {
           const data = entry.data as Parameters<ReturnType<typeof createContextTracker>["restore"]>[0] | undefined;
           if (data && tracker) {
@@ -1027,7 +1013,7 @@ export default function (pi: ExtensionAPI) {
         logger?.info(`Pruned ${pruned} overflow principles during session start`);
       }
 
-      const restoreResult = restoreCuratorStateFromBranchEntries(grcState, ctx.sessionManager.getBranch() as Array<{ type?: string; customType?: string; data?: unknown }>, config.grc.summaryCacheSize);
+      const restoreResult = restoreCuratorStateFromBranchEntries(grcState, branch as Array<{ type?: string; customType?: string; data?: unknown }>, config.grc.summaryCacheSize);
       grcState = restoreResult.state;
       if (restoreResult.restoredCuratorArtifactRounds.length > 0) {
         const restoredRounds = restoreResult.restoredCuratorArtifactRounds.join(",");
@@ -1192,16 +1178,17 @@ export default function (pi: ExtensionAPI) {
       }
 
       const contextWindow = ctx.model?.contextWindow ?? null;
+      const branch = getCachedBranch(ctx);
 
       const branchMessages = contextWindow && contextWindow > 0
-        ? getSlidingWindowAgentRoundMessages(
-            ctx.sessionManager.getBranch(),
+        ? getCachedSlidingWindowAgentRoundMessages(
+            ctx,
             config.grc.keepRecentAgentRounds,
             contextWindow,
             config.grc.maxContextPercent,
           )
-        : getRecentAgentRoundMessages(
-            ctx.sessionManager.getBranch(),
+        : getCachedRecentAgentRoundMessages(
+            ctx,
             config.grc.keepRecentAgentRounds,
           );
 
@@ -1364,6 +1351,22 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
+      if (isCurrentSessionStateReady(ctx)) {
+        try {
+          const branch = getCachedBranch(ctx);
+          const result = await runSkillExploreAgentEndBridge({
+            branch,
+            sessionFile: getCurrentSessionFile(ctx),
+            logger,
+          });
+          skillReadCountCurrentSession = result.summary.totalSkillReads;
+        } catch (err) {
+          logger?.warn("skill-explore agent_end bridge failed:", err);
+        }
+      } else {
+        logger?.debug(`Skipped skill-explore bridge: ${getSessionScopeGuardReason(ctx) ?? "session-state-not-ready"}`);
+      }
+
       refreshWidget(ctx);
     } catch (err) {
       logger?.error("Agent end processing failed:", err);
@@ -1439,7 +1442,7 @@ export default function (pi: ExtensionAPI) {
    * /ptc - PasstoContext minimal control surface
    */
   pi.registerCommand("ptc", {
-    description: "PasstoContext 控制台：status / on / off / config / principles review export / principles review import",
+    description: "PasstoContext 控制台：status / on / off / config / rotate / compact / principles review export / principles review import",
     handler: async (args, ctx) => {
       const input = args?.trim() ?? "";
       if (!input) {
@@ -1457,7 +1460,7 @@ export default function (pi: ExtensionAPI) {
       if (handledPrinciplesReview) return;
 
       const parts = input.split(/\s+/);
-      const subcommand = parts[0]?.toLowerCase();
+      const subcommand = normalizePTCSubcommand(parts[0]);
 
       switch (subcommand) {
         case "status":
@@ -1471,6 +1474,9 @@ export default function (pi: ExtensionAPI) {
           return;
         case "config":
           await handlePTCConfig(ctx);
+          return;
+        case "rotate":
+          await handlePTCRotate(ctx);
           return;
         default:
           ctx.ui.notify(getPTCUsageText(), "warning");
@@ -1595,5 +1601,65 @@ export default function (pi: ExtensionAPI) {
     }
 
     ctx.ui.notify(`打开配置文件失败：${result.reason}\n${terminalFileLink(configPath)}`, "error");
+  }
+
+  async function handlePTCRotate(ctx: ExtensionCommandContext): Promise<void> {
+    if (!config || !grcState) {
+      ctx.ui.notify("PasstoContext not initialized", "warning");
+      return;
+    }
+
+    await ctx.waitForIdle();
+
+    const currentSessionFile = ctx.sessionManager.getSessionFile();
+    if (!currentSessionFile) {
+      ctx.ui.notify("当前 session 没有持久化文件，无法 rotate。", "warning");
+      return;
+    }
+
+    const lineageEntries = await getLineageSummaryWarehouseEntries(ctx, {
+      lineageSummaryMaxDepth: config.grc.lineageSummaryMaxDepth,
+    });
+    const latestGoalState = grcState.curator.lastGoalState;
+    const latestSummaryEntry = grcState.curator.lastSummaryEntry;
+    const kickoffLines: string[] = [
+      "继续当前工作。PasstoContext 已执行 session rotate。",
+      `旧 session: ${currentSessionFile}`,
+      `lineage summaries: ${lineageEntries.length}`,
+    ];
+
+    if (latestGoalState?.active.length) {
+      kickoffLines.push("当前活跃目标：");
+      for (const item of latestGoalState.active.slice(0, 5)) {
+        kickoffLines.push(`- ${item.assertion}`);
+      }
+    }
+
+    if (latestSummaryEntry?.summary.goal) {
+      kickoffLines.push(`最近摘要目标：${latestSummaryEntry.summary.goal}`);
+    }
+
+    const kickoff = kickoffLines.join("\n");
+
+    const result = await ctx.newSession({
+      parentSession: currentSessionFile,
+      setup: async (sm) => {
+        sm.appendCustomEntry("ptc-rotate-lineage", {
+          rotatedFrom: currentSessionFile,
+          rotatedAt: new Date().toISOString(),
+          lineageSummaryCount: lineageEntries.length,
+          latestGoalState,
+          latestSummaryEntry,
+        });
+      },
+      withSession: async (replacementCtx) => {
+        replacementCtx.ui.notify(`PasstoContext 已 rotate 到新 session，并保留 parentSession lineage。`, "info");
+        await replacementCtx.sendUserMessage(kickoff, { deliverAs: "followUp" });
+      },
+    });
+
+    if (result.cancelled) {
+      ctx.ui.notify("Session rotate 已取消。", "info");
+    }
   }
 }

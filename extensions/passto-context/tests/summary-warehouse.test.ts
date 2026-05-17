@@ -194,5 +194,6 @@ test('buildSessionSummarySearchGuidance emits runtime guidance only when warehou
   assert.equal(buildSessionSummarySearchGuidance(false), '');
   const guidance = buildSessionSummarySearchGuidance(true);
   assert.match(guidance, /ptc_search_summary/);
+  assert.match(guidance, /parentSession lineage/);
   assert.match(guidance, /SummaryCache 只包含近期窗口/);
 });

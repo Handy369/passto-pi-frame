@@ -1,6 +1,7 @@
+import { getCachedLineageSummaryWarehouseEntries, getCachedSessionSummaryWarehouseEntries } from "./branch-runtime-cache.ts";
 import { buildSessionSummarySearchGuidance } from "./grc-prompts.ts";
-import { buildSessionSummaryWarehouse, searchSessionSummaryWarehouse } from "./summary-warehouse.ts";
-import type { SummaryEntry } from "./types.ts";
+import { searchSessionSummaryWarehouse } from "./summary-warehouse.ts";
+import type { GRCConfig, SummaryEntry } from "./types.ts";
 
 interface BranchEntryLike {
   type?: string;
@@ -10,9 +11,10 @@ interface BranchEntryLike {
 
 interface SessionManagerLike {
   getBranch(): BranchEntryLike[];
+  getSessionFile?(): string | undefined;
 }
 
-interface SummarySearchContextLike {
+export interface SummarySearchContextLike {
   sessionManager: SessionManagerLike;
 }
 
@@ -23,37 +25,48 @@ export interface SummarySearchToolResult {
     limit: number;
     totalWarehouseEntries: number;
     hits: SummaryEntry[];
+    searchScope: "session" | "lineage";
   };
 }
 
 export function getSessionSummaryWarehouseEntries(ctx: SummarySearchContextLike): SummaryEntry[] {
-  return buildSessionSummaryWarehouse(ctx.sessionManager.getBranch());
+  return getCachedSessionSummaryWarehouseEntries(ctx);
 }
 
-export function executeSummarySearchTool(
+export async function getLineageSummaryWarehouseEntries(
+  ctx: SummarySearchContextLike,
+  config?: Pick<GRCConfig, "lineageSummaryMaxDepth">,
+): Promise<SummaryEntry[]> {
+  return getCachedLineageSummaryWarehouseEntries(ctx, config);
+}
+
+export async function executeSummarySearchTool(
   params: { query: string; limit?: number },
   ctx: SummarySearchContextLike,
-): SummarySearchToolResult {
+  config?: Pick<GRCConfig, "lineageSummaryMaxDepth">,
+): Promise<SummarySearchToolResult> {
   const limit = Number.isFinite(params.limit) ? Math.max(1, Math.min(20, Math.trunc(params.limit ?? 5))) : 5;
-  const entries = getSessionSummaryWarehouseEntries(ctx);
+  const entries = await getLineageSummaryWarehouseEntries(ctx, config);
   const hits = searchSessionSummaryWarehouse(entries, params.query, limit);
 
   return {
-    content: [{ type: "text", text: hits.length > 0 ? `Found ${hits.length} current-session summary hit(s).` : "No current-session summary hits found." }],
+    content: [{ type: "text", text: hits.length > 0 ? `Found ${hits.length} lineage summary hit(s).` : "No lineage summary hits found." }],
     details: {
       query: params.query,
       limit,
       totalWarehouseEntries: entries.length,
       hits,
+      searchScope: "lineage",
     },
   };
 }
 
-export function injectSessionSummarySearchGuidance(
+export async function injectSessionSummarySearchGuidance(
   systemPrompt: string,
   grcPromptEnabled: boolean,
   ctx: SummarySearchContextLike,
-): { systemPrompt: string; diagnostic: string } {
+  config?: Pick<GRCConfig, "lineageSummaryMaxDepth">,
+): Promise<{ systemPrompt: string; diagnostic: string }> {
   if (!grcPromptEnabled) {
     return {
       systemPrompt,
@@ -61,17 +74,17 @@ export function injectSessionSummarySearchGuidance(
     };
   }
 
-  const warehouseEntries = getSessionSummaryWarehouseEntries(ctx);
-  const guidance = buildSessionSummarySearchGuidance(warehouseEntries.length > 0);
+  const warehouseCount = getSessionSummaryWarehouseEntries(ctx).length;
+  const guidance = buildSessionSummarySearchGuidance(warehouseCount > 0);
   if (!guidance) {
     return {
       systemPrompt,
-      diagnostic: `summary-search-guidance:0(warehouse=${warehouseEntries.length})`,
+      diagnostic: `summary-search-guidance:0(warehouse=${warehouseCount})`,
     };
   }
 
   return {
     systemPrompt: `${systemPrompt}\n\n${guidance}`,
-    diagnostic: `summary-search-guidance(${warehouseEntries.length}/${guidance.length} chars)`,
+    diagnostic: `summary-search-guidance(${warehouseCount}/${guidance.length} chars)`,
   };
 }

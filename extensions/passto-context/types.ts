@@ -56,6 +56,7 @@ export interface GRCConfig {
   maxPrinciples: number;
   orchestratorToolPrefixes: string[];
   widgetNoticeMaxChars: number;
+  lineageSummaryMaxDepth: number;
 }
 
 export type LogLevel = "error" | "warn" | "info" | "debug";
@@ -259,6 +260,7 @@ export interface SummaryEntry {
   agentRound: number;
   timestamp: string;
   sessionFile?: string;
+  lineageDepth?: number;
   sessionEntryRange?: {
     startAgentEntryIndex: number;
     endAgentEntryIndex: number;

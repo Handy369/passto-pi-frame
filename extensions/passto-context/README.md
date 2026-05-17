@@ -27,7 +27,7 @@
 ### 🔄 GRC 认知循环（已启用）
 当前版本已将 GRC（Generator-Reflector-Curator）集成到主扩展中，并已进入 v1.1 收敛主链：
 
-> 最终架构说明：`docs/v1.1/V1_1_FINAL_ARCHITECTURE.md`
+> 当前架构说明：`docs/design_v1.2.md`（GRC 主链）与 `docs/skill_intelligence_v1.1.md`（skill-explore / runtime-proof）
 
 - 主调度已切到 **agent-round / post-round**：`agent_end` 后后台启动 Reflector；Curator 在 `before_agent_start` 处理上一轮
 - `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles（分为人工宪法原则层与普通历史经验层）
@@ -44,7 +44,13 @@
 - `SummaryCache` 注入会自动排除最近已保留的 raw rounds，避免与 recent messages 重复；缓存溢出时会记录 eviction 日志
 - `session_before_compact` 仅在存在 Curator 最新摘要时由扩展接管；否则完全回退 Pi 默认 compaction
 - 遇到 `passto_planner_*` / `passto_executor_*` / `passto_builder_*` 等编排型工具时，GRC 会自动让行，暂停 prompt 注入、steer、context 修剪和自动触发
-- widget 当前真实代码已对齐为紧凑格式：`Run:11 7.5k | 记:28.4K | 思:✓ | 理:✓`
+- `skill-explore` 已收敛为 PasstoContext 宿主内插件，代码落点为 `plugin/skill-explore/index.ts`；主触发为 `agent_end`，产物落盘到 `~/.passtocontext/skill-explore/`
+- `skill-explore` 当前会递归解析顶层 transcript 与 `subagent` nested transcript 中的 `read .../SKILL.md`，并在 `session_start` 从 branch 恢复当前 session 的 Skill 读取计数
+- `skill-explore` v1.2 已打通最小 handoff 闭环：`agent_end` 现会自动从当前 session branch 构建 usage facts → aggregate，并为每个 aggregate 自动落一份 `handoff/skills-maker/bundles/*.json`；后续由 `skills-maker` 真实消费后写回 `receipts/` 与 `reviewed` 索引
+- 仓库已提供可重复执行的 P4 proof 脚本入口：`npm run proof:skill-explore-p4 -- --session <session.jsonl> --root-dir <artifact-root> --output-doc <output.md> --skills-maker-skill <SKILL.md> --handoff-reference <skill-explore-handoff.md>`；对应回归测试已接入 `npm run test:status`
+- 另提供最小“主动扫描 ready bundle”脚本入口：`npm run proof:skill-explore-read-ready -- --root-dir <artifact-root> [--target-skill <skillKey|skillName|skillPath>] [--format json|markdown]`；选择策略现为 `target skill > newer > richer signals`：默认先按时间取最新项；若显式提供 target skill，则先限缩到匹配 skill 的候选，再按 newer、最后按 richer signals 决定；未命中时显式回退到全量候选中的最新 bundle。脚本输出现已显式包含 `selection.orderedBy / selection.signalRichness / selectionSummary.orderedByText`，并支持 markdown 模式直接产出可审阅摘要
+- 另提供端到端“ready → bundle → receipt” proof 脚本入口：`npm run proof:skill-explore-ready-receipt -- --root-dir <artifact-root> --output-doc <output.md> --skills-maker-skill <SKILL.md> --handoff-reference <skill-explore-handoff.md> [--target-skill <skillKey|skillName|skillPath>]`；它会按 `target skill > newer > richer signals` 消费 ready bundle、产出审计文档并写回 reviewed receipt；若未命中指定 skill，则回退到最新 ready bundle。产出的 proof 文档现已显式记录 `orderedBy` 与 `signalRichness` 细节
+- widget 当前真实代码已对齐为紧凑格式：`Run:11 7.5k | 记:28+4 | 思:✓ | 理:✓`，其中 `记:<principlesExtracted>+<skillReadCount>` 的左侧语义保持为“提取到的原则数”
 - 若开启调试，日志目标应为 `~/.passtocontext/log/`，而不是把 debug/logger 文字直接显示在 TUI 中
 
 ### 📊 上下文追踪
@@ -439,7 +445,7 @@ before_agent_start
     └─ context: 保留最近 N 个 agent-round 原始消息，并注入 GoalState + SummaryCache
 ```
 
-### 当前实现状态（2026-05-09）
+### 当前实现状态（2026-05-17）
 
 基于真实本地 Pi CLI 环境验证，以下能力已跑通：
 
@@ -458,10 +464,13 @@ before_agent_start
 - Reflector 在“无实质建议”时会记录日志：`Reflector finished (no substantive advice)`
 - `runtimeMode=off` 会关闭 GRC prompt 注入、principles 注入、context 修剪和 curator-aware compaction
 - `session_before_compact` 已实现 curator-only 接管策略，日志可见：`Using curator summary for compaction`
+- `skill-explore` 已重定位为 PasstoContext hosted plugin：代码位于 `plugin/skill-explore/index.ts`，宿主在 `agent_end` 调用桥接持久化，在 `session_start` 从 branch 恢复当前 session 的 Skill 读取计数
+- `skill-explore` 当前真实产物目录为 `~/.passtocontext/skill-explore/`，结构包括：`sessions/<sessionKey>/round-skill-usage-facts.json`、`sessions/<sessionKey>/skill-explore-summary.json` 与 `latest/latest-session.json`
+- `skill-explore` 已通过真实 session 验证 top-agent / subagent 双场景：顶层 `read .../SKILL.md` 与 nested `subagent` transcript 中的 `read .../SKILL.md` 都能被 `agent_end` 后正确抽取并落盘
 - logger 目标目录已切换为 `~/.passtocontext/log/`
-- widget 当前代码已使用 `Run / context usage / 记 / 思 / 理` 结构
+- widget 当前代码已使用 `Run / context usage / 记 / 思 / 理` 结构，其中 `记:` 当前真实语义为 `记:<principlesExtracted>+<skillReadCount>`
 
-### 测试状态（2026-05-09）
+### 测试状态（2026-05-17）
 
 基于本地真实 Pi CLI + 源码运行态测试，已验证：
 
@@ -483,6 +492,7 @@ before_agent_start
   - `/ptc status` 的收敛口径
   - `principles review` 的 model / HTML / import / command wiring
   - round-state 更新与恢复
+  - `skill-explore` 的 round fact 抽取、artifact 落盘、widget `记:` 格式化
 - `npm run test:tmux` 已聚合真实 Pi / tmux 集成回归：
   - `test:tui`
   - `test:midrun`
@@ -712,14 +722,18 @@ passto-context/
 ├── grc-goal-view.ts         # GoalState 共享焦点视图模型
 ├── grc-restore.ts           # grc-state / curator-artifact / reflector-artifact 恢复链
 ├── ptc-status.ts            # `/ptc status` 文本 formatter
+├── plugin/
+│   └── skill-explore/
+│       └── index.ts         # skill-explore hosted plugin（agent_end 抽取 / session_start 恢复 / artifact 持久化）
 ├── docs/
-│   └── v1.1/
-│       ├── V1_1_FINAL_ARCHITECTURE.md   # v1.1 最终权威口径
-│       ├── TODO.md                      # v1.1 收尾归档
-│       ├── DESIGN-GRC-v1.1.md          # 主设计背景
-│       ├── curator-v1.1.md             # Curator 详细设计
-│       ├── PASSTO_CONTEXT_V1_1_PLAN.md # 历史计划文档
-│       └── V1_1_CODE_AUDIT.md          # 历史审计文档
+│   ├── design_v1.2.md       # GRC 主设计
+│   ├── curator_v1.2.md      # Curator 详细设计
+│   ├── reflector_v1.2.md    # Reflector 详细设计
+│   ├── principles_v1.2.md   # principles 设计
+│   ├── memory_v1.2.md       # memory 设计
+│   ├── generator_v1.2.md    # generator charter 设计
+│   ├── skill_intelligence_v1.0.md
+│   └── skill_intelligence_v1.1.md # skill-explore / runtime-proof 当前权威设计口径
 ├── tests/                    # Node 回归测试
 ├── scripts/
 │   ├── tui-regression.sh              # 真实 Pi TUI 回归脚本（tmux 驱动）

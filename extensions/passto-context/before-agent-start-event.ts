@@ -76,7 +76,7 @@ export function createBeforeAgentStartHandler(deps: BeforeAgentStartHandlerDeps)
         }
       }
 
-      const promptInjection = buildBeforeAgentStartPrompt({
+      const promptInjection = await buildBeforeAgentStartPrompt({
         event: { prompt: event.prompt, systemPrompt: event.systemPrompt },
         config,
         grcState,

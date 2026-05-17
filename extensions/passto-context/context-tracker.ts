@@ -5,6 +5,7 @@
 
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentEndEvent, TurnEndEvent } from "@earendil-works/pi-coding-agent";
+import { getCachedLatestUserTimestamp } from "./branch-runtime-cache.ts";
 import type { SessionState, TrackingConfig } from "./types.js";
 import type { Logger } from "./types.js";
 
@@ -178,16 +179,7 @@ function extractErrorsFromToolResults(toolResults: PiMessage[]): string[] {
 }
 
 function getLatestUserTimestamp(ctx: ExtensionContext): number | null {
-  const branch = ctx.sessionManager.getBranch();
-  for (let i = branch.length - 1; i >= 0; i--) {
-    const entry = branch[i];
-    if (entry.type !== "message") continue;
-    const message = entry.message as { role?: string; timestamp?: number } | undefined;
-    if (message?.role === "user" && typeof message.timestamp === "number") {
-      return message.timestamp;
-    }
-  }
-  return null;
+  return getCachedLatestUserTimestamp(ctx);
 }
 
 // =============================================================================

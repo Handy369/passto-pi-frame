@@ -1,0 +1,6 @@
+{"type":"session","version":3,"id":"fixture-p4-session","timestamp":"2026-05-17T15:00:00.000Z","cwd":"/tmp/skill-explore-p4"}
+{"type":"custom","customType":"passto-round-boundary","data":{"customType":"passto-round-boundary","agentRound":1,"totalCompletedAgentRounds":0,"userTurnsAtStart":0,"createdAt":"2026-05-17T15:00:01.000Z"}}
+{"type":"message","message":{"role":"user","content":[{"type":"text","text":"请先读取 project-implementation skill。"}],"timestamp":1779002000000}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"toolCall","name":"read","arguments":{"path":"/Users/handy/.claude/skills/project-implementation/SKILL.md"}}],"timestamp":1779002001000}}
+{"type":"message","message":{"role":"toolResult","toolName":"read","content":[{"type":"text","text":"fixture skill content"}],"timestamp":1779002002000}}
+{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"OK"}],"timestamp":1779002003000}}

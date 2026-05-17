@@ -1,7 +1,7 @@
 import type { AgentRoundBoundaryEntry } from "./types.ts";
 import { estimateTokens } from "./utils.ts";
 
-interface ContextLikeMessage {
+export interface ContextLikeMessage {
   role: string;
   timestamp?: number;
   customType?: string;
@@ -82,15 +82,17 @@ export function findAgentRoundBoundaries<T extends BranchEntryLike>(branch: T[])
 export function findAgentRoundBoundaryByRound<T extends BranchEntryLike>(
   branch: T[],
   agentRound: number,
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
 ): AgentRoundBoundary | null {
-  return findAgentRoundBoundaries(branch).find((boundary) => boundary.agentRound === agentRound) ?? null;
+  return boundaries.find((boundary) => boundary.agentRound === agentRound) ?? null;
 }
 
 export function resolveAgentRoundEntryRange<T extends BranchEntryLike>(
   branch: T[],
   agentRound: number,
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
 ): { startAgentEntryIndex: number; endAgentEntryIndex: number } | null {
-  const boundary = findAgentRoundBoundaryByRound(branch, agentRound);
+  const boundary = findAgentRoundBoundaryByRound(branch, agentRound, boundaries);
   if (!boundary) return null;
 
   let endAgentEntryIndex = boundary.endEntryIndex;
@@ -110,8 +112,10 @@ export function resolveAgentRoundEntryRange<T extends BranchEntryLike>(
   };
 }
 
-export function getCurrentAgentRoundEntries<T extends BranchEntryLike>(branch: T[]): T[] {
-  const boundaries = findAgentRoundBoundaries(branch);
+export function getCurrentAgentRoundEntries<T extends BranchEntryLike>(
+  branch: T[],
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
+): T[] {
   if (boundaries.length === 0) {
     return branch.filter((entry) => entry?.type === "message" && !!entry.message);
   }
@@ -125,13 +129,16 @@ export function getCurrentAgentRoundEntries<T extends BranchEntryLike>(branch: T
 export function serializeCurrentAgentRoundConversation<T extends BranchEntryLike>(
   branch: T[],
   serializer: (entries: Array<{ message?: unknown }>) => string,
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
 ): string {
-  const entries = getCurrentAgentRoundEntries(branch).map((entry) => ({ message: entry.message }));
+  const entries = getCurrentAgentRoundEntries(branch, boundaries).map((entry) => ({ message: entry.message }));
   return serializer(entries);
 }
 
-export function getPreviousAgentRoundEntries<T extends BranchEntryLike>(branch: T[]): T[] {
-  const boundaries = findAgentRoundBoundaries(branch);
+export function getPreviousAgentRoundEntries<T extends BranchEntryLike>(
+  branch: T[],
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
+): T[] {
   if (boundaries.length === 0) {
     return [];
   }
@@ -163,8 +170,9 @@ export function getPreviousAgentRoundEntries<T extends BranchEntryLike>(branch: 
 export function serializePreviousAgentRoundConversation<T extends BranchEntryLike>(
   branch: T[],
   serializer: (entries: Array<{ message?: unknown }>) => string,
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
 ): string {
-  const entries = getPreviousAgentRoundEntries(branch).map((entry) => ({ message: entry.message }));
+  const entries = getPreviousAgentRoundEntries(branch, boundaries).map((entry) => ({ message: entry.message }));
   return serializer(entries);
 }
 
@@ -187,8 +195,8 @@ export function getLatestUserMessageText<T extends BranchEntryLike>(branch: T[])
 export function getRecentAgentRoundMessages<T extends BranchEntryLike>(
   branch: T[],
   keepRecentRounds: number,
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
 ): ContextLikeMessage[] {
-  const boundaries = findAgentRoundBoundaries(branch);
   const safeKeep = Math.max(1, keepRecentRounds);
 
   const slicedEntries = boundaries.length > safeKeep
@@ -207,8 +215,8 @@ export function getSlidingWindowAgentRoundMessages<T extends BranchEntryLike>(
   minRecentRounds: number,
   contextWindow: number,
   maxContextPercent: number,
+  boundaries: AgentRoundBoundary[] = findAgentRoundBoundaries(branch),
 ): ContextLikeMessage[] {
-  const boundaries = findAgentRoundBoundaries(branch);
   const safeMinRounds = Math.max(1, minRecentRounds);
   const safeContextWindow = Math.max(1, contextWindow);
   const safeMaxContextPercent = Math.max(0.1, maxContextPercent);

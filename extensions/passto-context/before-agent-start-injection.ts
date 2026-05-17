@@ -46,7 +46,7 @@ export interface BeforeAgentStartPromptOutput {
   injectedMemories: MemoryItem[];
 }
 
-export function buildBeforeAgentStartPrompt(input: BeforeAgentStartPromptInput): BeforeAgentStartPromptOutput {
+export async function buildBeforeAgentStartPrompt(input: BeforeAgentStartPromptInput): Promise<BeforeAgentStartPromptOutput> {
   const {
     event,
     config,
@@ -102,7 +102,9 @@ export function buildBeforeAgentStartPrompt(input: BeforeAgentStartPromptInput):
   }
 
   {
-    const summarySearchInjection = injectSessionSummarySearchGuidance(systemPrompt, grcPromptEnabled, ctx);
+    const summarySearchInjection = await injectSessionSummarySearchGuidance(systemPrompt, grcPromptEnabled, ctx, {
+      lineageSummaryMaxDepth: config.grc.lineageSummaryMaxDepth,
+    });
     systemPrompt = summarySearchInjection.systemPrompt;
     diagnostics.push(summarySearchInjection.diagnostic);
   }

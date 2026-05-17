@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   executeSummarySearchTool,
+  getLineageSummaryWarehouseEntries,
   getSessionSummaryWarehouseEntries,
   injectSessionSummarySearchGuidance,
 } from '../runtime-summary-search.ts';
@@ -76,11 +77,21 @@ function makeBranch() {
   ];
 }
 
-function makeCtx(branch = makeBranch()) {
+let ctxCounter = 0;
+
+function makeCtx(branch = makeBranch(), sessionFile = '/tmp/session-a.jsonl') {
+  ctxCounter += 1;
+  const leafId = `leaf-${ctxCounter}`;
   return {
     sessionManager: {
       getBranch() {
         return branch;
+      },
+      getLeafId() {
+        return leafId;
+      },
+      getSessionFile() {
+        return sessionFile;
       },
     },
   };
@@ -93,14 +104,25 @@ test('getSessionSummaryWarehouseEntries rehydrates warehouse from current sessio
   assert.equal(entries[0]?.sessionFile, '/tmp/session-a.jsonl');
 });
 
-test('executeSummarySearchTool returns runtime-ready result with session pointers', () => {
-  const result = executeSummarySearchTool({ query: 'summaryCache eviction', limit: 5 }, makeCtx());
+test('getLineageSummaryWarehouseEntries falls back to current branch when depth is zero', async () => {
+  const entries = await getLineageSummaryWarehouseEntries(makeCtx(), {
+    lineageSummaryMaxDepth: 0,
+  });
+  assert.equal(entries.length, 2);
+  assert.deepEqual(entries.map((item) => item.agentRound), [3, 4]);
+});
+
+test('executeSummarySearchTool returns runtime-ready result with session pointers', async () => {
+  const result = await executeSummarySearchTool({ query: 'summaryCache eviction', limit: 5 }, makeCtx(), {
+    lineageSummaryMaxDepth: 0,
+  });
 
   assert.equal(result.content[0]?.type, 'text');
-  assert.match(result.content[0]?.text ?? '', /Found 1 current-session summary hit/);
+  assert.match(result.content[0]?.text ?? '', /Found 1 lineage summary hit/);
   assert.equal(result.details.query, 'summaryCache eviction');
   assert.equal(result.details.limit, 5);
   assert.equal(result.details.totalWarehouseEntries, 2);
+  assert.equal(result.details.searchScope, 'lineage');
   assert.equal(result.details.hits.length, 1);
   assert.equal(result.details.hits[0]?.agentRound, 3);
   assert.equal(result.details.hits[0]?.sessionFile, '/tmp/session-a.jsonl');
@@ -111,31 +133,64 @@ test('executeSummarySearchTool returns runtime-ready result with session pointer
   assert.equal(result.details.hits[0]?.sessionPointers?.searchQuery, 'summaryCache evict generator');
 });
 
-test('executeSummarySearchTool clamps limit and returns empty result text when no hit exists', () => {
-  const result = executeSummarySearchTool({ query: 'missing keyword', limit: 999 }, makeCtx());
+test('executeSummarySearchTool clamps limit and returns empty result text when no hit exists', async () => {
+  const result = await executeSummarySearchTool({ query: 'missing keyword', limit: 999 }, makeCtx(), {
+    lineageSummaryMaxDepth: 0,
+  });
 
-  assert.match(result.content[0]?.text ?? '', /No current-session summary hits found/);
+  assert.match(result.content[0]?.text ?? '', /No lineage summary hits found/);
   assert.equal(result.details.limit, 20);
   assert.equal(result.details.totalWarehouseEntries, 2);
   assert.deepEqual(result.details.hits, []);
 });
 
-test('injectSessionSummarySearchGuidance appends guidance only when warehouse exists and enabled', () => {
-  const enabled = injectSessionSummarySearchGuidance('BASE', true, makeCtx());
+test('injectSessionSummarySearchGuidance appends guidance only when warehouse exists and enabled', async () => {
+  const enabled = await injectSessionSummarySearchGuidance('BASE', true, makeCtx(), {
+    lineageSummaryMaxDepth: 0,
+  });
   assert.match(enabled.systemPrompt, /BASE/);
   assert.match(enabled.systemPrompt, /ptc_search_summary/);
+  assert.match(enabled.systemPrompt, /parentSession lineage/);
   assert.match(enabled.diagnostic, /summary-search-guidance\(2\//);
 
-  const disabled = injectSessionSummarySearchGuidance('BASE', false, makeCtx());
+  const disabled = await injectSessionSummarySearchGuidance('BASE', false, makeCtx(), {
+    lineageSummaryMaxDepth: 0,
+  });
   assert.equal(disabled.systemPrompt, 'BASE');
   assert.equal(disabled.diagnostic, 'summary-search-guidance:skip(enabled=false)');
 
-  const empty = injectSessionSummarySearchGuidance('BASE', true, makeCtx([]));
+  const empty = await injectSessionSummarySearchGuidance('BASE', true, makeCtx([]), {
+    lineageSummaryMaxDepth: 0,
+  });
   assert.equal(empty.systemPrompt, 'BASE');
   assert.equal(empty.diagnostic, 'summary-search-guidance:0(warehouse=0)');
 });
 
-test('restore replay and runtime summary search stay aligned on persisted curator artifacts', () => {
+test('injectSessionSummarySearchGuidance uses current-session warehouse without lineage traversal', async () => {
+  const ctx = makeCtx();
+  let getSessionFileCalls = 0;
+  const wrapped = {
+    sessionManager: {
+      getBranch: ctx.sessionManager.getBranch,
+      getLeafId() {
+        return 'wrapped-leaf';
+      },
+      getSessionFile() {
+        getSessionFileCalls += 1;
+        return '/tmp/session-a.jsonl';
+      },
+    },
+  };
+
+  const result = await injectSessionSummarySearchGuidance('BASE', true, wrapped, {
+    lineageSummaryMaxDepth: 8,
+  });
+
+  assert.match(result.systemPrompt, /ptc_search_summary/);
+  assert.equal(getSessionFileCalls, 1);
+});
+
+test('restore replay and runtime summary search stay aligned on persisted curator artifacts', async () => {
   const restoredBranch = [
     {
       type: 'custom',
@@ -293,8 +348,11 @@ test('restore replay and runtime summary search stay aligned on persisted curato
   assert.deepEqual(warehouseEntries.map((item) => item.agentRound), [12, 13]);
   assert.equal(warehouseEntries[0]?.summary.goal, 'restore 后继续支持 summary warehouse 检索');
 
-  const result = executeSummarySearchTool({ query: 'runtime search index.ts', limit: 5 }, makeCtx(restoredBranch));
+  const result = await executeSummarySearchTool({ query: 'runtime search index.ts', limit: 5 }, makeCtx(restoredBranch, '/tmp/restored-session.jsonl'), {
+    lineageSummaryMaxDepth: 0,
+  });
   assert.equal(result.details.totalWarehouseEntries, 2);
+  assert.equal(result.details.searchScope, 'lineage');
   assert.equal(result.details.hits.length, 1);
   assert.equal(result.details.hits[0]?.agentRound, 12);
   assert.equal(result.details.hits[0]?.summary.goal, 'restore 后继续支持 summary warehouse 检索');

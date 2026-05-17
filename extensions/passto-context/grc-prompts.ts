@@ -380,7 +380,8 @@ export function buildSessionSummarySearchGuidance(hasWarehouseEntries: boolean):
   return [
     "--- 当前会话历史摘要检索 ---",
     "- SummaryCache 只包含近期窗口。",
-    "- 如果需要回忆已被压缩出上下文的当前会话历史，可调用工具 `ptc_search_summary` 搜索当前 session 的 Summary 仓库。",
+    "- 如果需要回忆已被压缩出上下文的当前会话历史，可调用工具 `ptc_search_summary` 搜索当前 session 及 parentSession lineage 的 Summary 仓库。",
+    "- 该检索默认优先覆盖 rotate 后的新 session 与其父链中的历史 curator 摘要。",
     "- 查询词优先使用：目标、文件路径、关键决策、报错词、blocker。",
     "--- 历史摘要检索结束 ---",
   ].join("\n");

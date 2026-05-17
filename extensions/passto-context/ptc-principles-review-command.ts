@@ -16,7 +16,7 @@ export interface HandlePTCPrinciplesReviewCommandOptions {
 }
 
 export function getPTCUsageText(): string {
-  return 'Usage: /ptc [status|on|off|config|principles review export|principles review import <file>]';
+  return 'Usage: /ptc [status|on|off|config|rotate|compact|principles review export|principles review import <file>]';
 }
 
 export function formatPrinciplesReviewExportMessage(result: ExportPrinciplesReviewBundleResult): string {

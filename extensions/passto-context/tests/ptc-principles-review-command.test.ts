@@ -84,7 +84,7 @@ test('handlePTCPrinciplesReviewCommand warns on missing import file', async () =
 
   assert.equal(handled, true);
   assert.equal(notices[0]?.level, 'warning');
-  assert.match(notices[0]?.message ?? '', /Usage: \/ptc \[status\|on\|off\|config\|principles review export\|principles review import <file>\]/);
+  assert.match(notices[0]?.message ?? '', /Usage: \/ptc \[status\|on\|off\|config\|rotate\|principles review export\|principles review import <file>\]/);
 });
 
 test('handlePTCPrinciplesReviewCommand reports import failure', async () => {
@@ -105,6 +105,8 @@ test('handlePTCPrinciplesReviewCommand reports import failure', async () => {
 });
 
 test('format message helpers match command surface copy', () => {
+  assert.match(getPTCUsageText(), /rotate/);
+  assert.match(getPTCUsageText(), /compact/);
   assert.match(getPTCUsageText(), /principles review export/);
   assert.match(getPTCUsageText(), /principles review import <file>/);
 
