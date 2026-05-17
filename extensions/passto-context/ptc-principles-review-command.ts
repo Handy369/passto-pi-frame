@@ -16,7 +16,7 @@ export interface HandlePTCPrinciplesReviewCommandOptions {
 }
 
 export function getPTCUsageText(): string {
-  return 'Usage: /ptc [status|on|off|config|rotate|compact|principles review export|principles review import <file>]';
+  return 'Usage: /ptc [status|on|off|config|rotate|compact|principles review export|principles review import <file>|skills status|skills ready|skills reviewed|skills aggregate [skillKey|skillName|skillPath]|skills export [skillKey|skillName|skillPath] [output-dir]]';
 }
 
 export function formatPrinciplesReviewExportMessage(result: ExportPrinciplesReviewBundleResult): string {

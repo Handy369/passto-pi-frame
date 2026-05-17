@@ -25,9 +25,11 @@
 - 当前公开命令面不再暴露手动记忆管理入口
 
 ### 🔄 GRC 认知循环（已启用）
-当前版本已将 GRC（Generator-Reflector-Curator）集成到主扩展中，并已进入 v1.1 收敛主链：
+当前版本已将 GRC（Generator-Reflector-Curator）集成到主扩展中；其中 `skill-explore / runtime-proof` 文档口径现已明确收口为：**v1.1 收口完成，v1.2 最小闭环已落地，扩展项待继续**。
 
 > 当前架构说明：`docs/design_v1.2.md`（GRC 主链）与 `docs/skill_intelligence_v1.1.md`（skill-explore / runtime-proof）
+>
+> 版本收口说明：`docs/skill_intelligence_v1.1_closure_note.md`
 
 - 主调度已切到 **agent-round / post-round**：`agent_end` 后后台启动 Reflector；Curator 在 `before_agent_start` 处理上一轮
 - `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles（分为人工宪法原则层与普通历史经验层）
@@ -127,7 +129,7 @@ ln -sf "$SRC/package.json"     ./package.json
 
 ## 命令
 
-PasstoContext 当前公开命令面包括基础运行态命令，以及 principles review 的 export/import 命令：
+PasstoContext 当前公开命令面包括基础运行态命令、principles review 的 export/import 命令，以及 `skill-explore` 的查询/导出命令：
 
 ### `/ptc` / `/ptc status` — 显示总状态
 
@@ -201,6 +203,59 @@ Widget 会保留极简关闭态提示：`PTC:off`。
 - 校验 `registrySnapshotHash` 是否与当前 registry 一致
 - 校验 decision 中的 principle id 是否全部存在
 - 通过后仅写回 `metadata.lifecycle` 与 `updated`
+
+### `/ptc skills status` — 查看 skill-explore 总览
+
+```
+/ptc skills status
+```
+
+显示当前 `skill-explore` artifact 根目录、latest session 指针，以及 ready / reviewed / aggregate 计数。
+
+### `/ptc skills ready` — 查看 ready bundle 列表
+
+```
+/ptc skills ready
+```
+
+列出当前可供 `skills-maker` 或人工继续消费的 ready bundles。
+
+### `/ptc skills reviewed` — 查看 reviewed bundle 列表
+
+```
+/ptc skills reviewed
+```
+
+列出已产生 receipt 的 reviewed bundles，并显示最近一次消费状态。
+
+### `/ptc skills aggregate [skillKey|skillName|skillPath]` — 查看 aggregate 摘要
+
+```
+/ptc skills aggregate
+/ptc skills aggregate skills-maker
+```
+
+列出当前 `aggregates/` 下的 summary 条目；传入参数时按 `skillKey | skillName | skillPath` 精确过滤。
+
+### `/ptc skills export [skillKey|skillName|skillPath] [output-dir]` — 导出 skill review bundle
+
+```
+/ptc skills export
+/ptc skills export skills-maker
+/ptc skills export skills-maker /tmp/skill-review-export
+```
+
+从当前 `skill-explore` 产物中导出一份可审阅 bundle，输出：
+- `skill-review-model.json`
+- `review.html`
+
+默认会优先导出 ready bundle；若当前没有 ready bundle，则回退到 reviewed bundle，再回退到 aggregate summary。
+
+默认输出目录：
+
+```
+~/.passtocontext/skill-explore/exports/<timestamp>[-<target-skill>]/
+```
 
 ### Manual principle 最小 JSON 样例
 
@@ -733,7 +788,8 @@ passto-context/
 │   ├── memory_v1.2.md       # memory 设计
 │   ├── generator_v1.2.md    # generator charter 设计
 │   ├── skill_intelligence_v1.0.md
-│   └── skill_intelligence_v1.1.md # skill-explore / runtime-proof 当前权威设计口径
+│   ├── skill_intelligence_v1.1.md # skill-explore / runtime-proof 当前权威设计口径
+│   └── skill_intelligence_v1.1_closure_note.md # v1.1 收口完成说明 / v1.2 最小闭环状态说明
 ├── tests/                    # Node 回归测试
 ├── scripts/
 │   ├── tui-regression.sh              # 真实 Pi TUI 回归脚本（tmux 驱动）

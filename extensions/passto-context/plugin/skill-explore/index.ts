@@ -959,6 +959,10 @@ function getArtifactRoot(rootDir?: string): string {
   return expandHome(rootDir ?? DEFAULT_SKILL_EXPLORE_ROOT);
 }
 
+export function resolveSkillExploreArtifactRoot(rootDir?: string): string {
+  return getArtifactRoot(rootDir);
+}
+
 function getAggregateVersionDirName(skill: SkillAggregateSummary['skill']): string {
   return safeFileName(skill.versionKey ?? skill.descriptionHash ?? 'unversioned');
 }
@@ -1202,6 +1206,98 @@ export async function listReadySkillReviewBundles(rootDir?: string): Promise<Ski
   } catch {
     return [];
   }
+}
+
+export async function listReviewedSkillReviewBundles(rootDir?: string): Promise<SkillReviewReviewedIndexEntry[]> {
+  const resolvedRootDir = getArtifactRoot(rootDir);
+  const reviewedIndexFile = path.join(getSkillReviewIndexesDir(resolvedRootDir), 'reviewed.json');
+
+  try {
+    const raw = await fs.readFile(reviewedIndexFile, 'utf-8');
+    const reviewed = JSON.parse(raw) as SkillReviewReviewedIndexEntry[];
+    return [...reviewed].sort(
+      (a, b) => a.latestReceipt.consumedAt.localeCompare(b.latestReceipt.consumedAt) || a.bundleId.localeCompare(b.bundleId),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export interface SkillExploreLatestSessionIndex {
+  sessionFile: string | null;
+  sessionKey: string;
+  updatedAt: string;
+  totalSkillReads: number;
+  summaryFile: string;
+  roundFactsFile: string;
+}
+
+export async function readLatestSkillExploreSessionIndex(rootDir?: string): Promise<SkillExploreLatestSessionIndex | null> {
+  const resolvedRootDir = getArtifactRoot(rootDir);
+  const latestFile = path.join(resolvedRootDir, 'latest', 'latest-session.json');
+
+  try {
+    const raw = await fs.readFile(latestFile, 'utf-8');
+    return JSON.parse(raw) as SkillExploreLatestSessionIndex;
+  } catch {
+    return null;
+  }
+}
+
+function matchesRequestedAggregateTargetSkill(skill: SkillAggregateSummary['skill'], targetSkill: string): boolean {
+  const normalizedTargetSkill = targetSkill.trim().toLowerCase();
+  if (!normalizedTargetSkill) return false;
+
+  const candidates = [
+    skill.skillKey,
+    skill.skillName,
+    skill.skillPath,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+  return candidates.some((value) => value.toLowerCase() === normalizedTargetSkill);
+}
+
+export async function listSkillAggregateSummaries(input?: {
+  rootDir?: string;
+  targetSkill?: string;
+}): Promise<SkillAggregateSummary[]> {
+  const resolvedRootDir = getArtifactRoot(input?.rootDir);
+  const aggregateRootDir = path.join(resolvedRootDir, 'aggregates', 'by-skill');
+
+  let skillDirs: fs.Dirent[];
+  try {
+    skillDirs = await fs.readdir(aggregateRootDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const summaries: SkillAggregateSummary[] = [];
+
+  for (const skillDir of skillDirs.filter((entry) => entry.isDirectory())) {
+    const skillPath = path.join(aggregateRootDir, skillDir.name);
+    let versionDirs: fs.Dirent[];
+    try {
+      versionDirs = await fs.readdir(skillPath, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const versionDir of versionDirs.filter((entry) => entry.isDirectory())) {
+      const summaryFile = path.join(skillPath, versionDir.name, 'summary.json');
+      try {
+        const raw = await fs.readFile(summaryFile, 'utf-8');
+        const summary = JSON.parse(raw) as SkillAggregateSummary;
+        if (input?.targetSkill && !matchesRequestedAggregateTargetSkill(summary.skill, input.targetSkill)) {
+          continue;
+        }
+        summaries.push(summary);
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  return summaries.sort((a, b) => b.generatedAt.localeCompare(a.generatedAt) || b.window.to.localeCompare(a.window.to) || a.aggregateId.localeCompare(b.aggregateId));
 }
 
 interface ReadyBundleSignalRichness {

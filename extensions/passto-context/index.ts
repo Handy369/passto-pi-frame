@@ -48,6 +48,7 @@ import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
 import { formatPTCStatus } from "./ptc-status.ts";
 import { getPTCUsageText, handlePTCPrinciplesReviewCommand } from "./ptc-principles-review-command.ts";
+import { handlePTCSkillsCommand } from "./ptc-skills-command.ts";
 import { normalizePTCSubcommand } from "./ptc-command-routing.ts";
 import { appendWidgetNotice, getVisibleWidgetNotice, type WidgetNoticeState } from "./widget-status.ts";
 import {
@@ -1442,7 +1443,7 @@ export default function (pi: ExtensionAPI) {
    * /ptc - PasstoContext minimal control surface
    */
   pi.registerCommand("ptc", {
-    description: "PasstoContext 控制台：status / on / off / config / rotate / compact / principles review export / principles review import",
+    description: "PasstoContext 控制台：status / on / off / config / rotate / compact / principles review export / principles review import / skills status / skills ready / skills reviewed / skills aggregate / skills export", 
     handler: async (args, ctx) => {
       const input = args?.trim() ?? "";
       if (!input) {
@@ -1458,6 +1459,14 @@ export default function (pi: ExtensionAPI) {
           })
         : false;
       if (handledPrinciplesReview) return;
+
+      const handledSkills = logger
+        ? await handlePTCSkillsCommand(input, {
+            logger,
+            notify: (message, level) => ctx.ui.notify(message, level),
+          })
+        : false;
+      if (handledSkills) return;
 
       const parts = input.split(/\s+/);
       const subcommand = normalizePTCSubcommand(parts[0]);

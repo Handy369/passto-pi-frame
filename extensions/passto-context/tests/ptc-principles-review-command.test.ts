@@ -84,7 +84,7 @@ test('handlePTCPrinciplesReviewCommand warns on missing import file', async () =
 
   assert.equal(handled, true);
   assert.equal(notices[0]?.level, 'warning');
-  assert.match(notices[0]?.message ?? '', /Usage: \/ptc \[status\|on\|off\|config\|rotate\|principles review export\|principles review import <file>\]/);
+  assert.match(notices[0]?.message ?? '', /Usage: \/ptc \[status\|on\|off\|config\|rotate\|compact\|principles review export\|principles review import <file>\|skills status\|skills ready\|skills reviewed\|skills aggregate \[skillKey\|skillName\|skillPath\]\|skills export \[skillKey\|skillName\|skillPath\] \[output-dir\]\]/);
 });
 
 test('handlePTCPrinciplesReviewCommand reports import failure', async () => {
@@ -109,6 +109,11 @@ test('format message helpers match command surface copy', () => {
   assert.match(getPTCUsageText(), /compact/);
   assert.match(getPTCUsageText(), /principles review export/);
   assert.match(getPTCUsageText(), /principles review import <file>/);
+  assert.match(getPTCUsageText(), /skills status/);
+  assert.match(getPTCUsageText(), /skills ready/);
+  assert.match(getPTCUsageText(), /skills reviewed/);
+  assert.match(getPTCUsageText(), /skills aggregate/);
+  assert.match(getPTCUsageText(), /skills export/);
 
   assert.match(
     formatPrinciplesReviewExportMessage({

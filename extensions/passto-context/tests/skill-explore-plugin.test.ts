@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -17,10 +17,14 @@ import {
   listBundleReceipts,
   listReadySkillReviewBundles,
   getLatestReadySkillReviewBundle,
+  listReviewedSkillReviewBundles,
+  listSkillAggregateSummaries,
   persistBundleReceipt,
   persistSkillAggregateArtifacts,
   persistSkillExploreArtifacts,
   persistSkillReviewBundle,
+  readLatestSkillExploreSessionIndex,
+  resolveSkillExploreArtifactRoot,
   runSkillExploreAgentEndBridge,
 } from '../plugin/skill-explore/index.ts';
 
@@ -981,6 +985,192 @@ test('skill-explore plugin persists round facts and latest summary under configu
 
   assert.equal(summary.totalSkillReads, 1);
   assert.equal(latest.totalSkillReads, 1);
+});
+
+test('listReviewedSkillReviewBundles reads reviewed index entries ordered by consumedAt', async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), 'skill-explore-reviewed-'));
+  const bundle = {
+    bundleId: 'bundle:project-implementation:unversioned:abc',
+    createdAt: '2026-05-17T13:00:00.000Z',
+    targetSkill: {
+      skillKey: 'project-implementation',
+      skillName: 'project-implementation',
+      skillPath: '/Users/handy/.claude/skills/project-implementation/SKILL.md',
+    },
+    scope: {
+      from: '2026-05-17T12:00:00.000Z',
+      to: '2026-05-17T12:30:00.000Z',
+      usageFactCount: 2,
+      sessionCount: 1,
+    },
+    summary: {
+      totalReads: 2,
+      topAgentReads: 2,
+      subagentReads: 0,
+      dominantTaskShapes: ['implement api'],
+      notableSignals: {
+        advance: 1,
+        correct: 0,
+        supplement: 1,
+        continue: 0,
+        clarify: 0,
+      },
+    },
+    reviewFocus: {
+      representativeHits: ['fact-1'],
+      correctionSoonCases: [],
+      subagentCases: [],
+      ambiguousCases: [],
+    },
+    openQuestions: ['是否需要拆 skill'],
+    artifactRefs: {
+      aggregateSummaryFile: '/tmp/summary.json',
+    },
+  };
+
+  await persistSkillReviewBundle({ bundle, rootDir });
+  await persistBundleReceipt({
+    rootDir,
+    receipt: {
+      bundleId: bundle.bundleId,
+      consumer: 'skills-maker',
+      consumerRunId: 'run-1',
+      consumedAt: '2026-05-17T13:05:00.000Z',
+      result: { status: 'reviewed' },
+    },
+  });
+
+  const reviewed = await listReviewedSkillReviewBundles(rootDir);
+  assert.equal(reviewed.length, 1);
+  assert.equal(reviewed[0]?.bundleId, bundle.bundleId);
+  assert.equal(reviewed[0]?.latestReceipt.consumerRunId, 'run-1');
+});
+
+test('listSkillAggregateSummaries filters by target skill and sorts newest first', async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), 'skill-explore-aggregate-list-'));
+  await mkdir(path.join(rootDir, 'aggregates', 'by-skill', 'project-implementation', 'unversioned'), { recursive: true });
+  await mkdir(path.join(rootDir, 'aggregates', 'by-skill', 'skills-maker', 'unversioned'), { recursive: true });
+
+  await writeFile(
+    path.join(rootDir, 'aggregates', 'by-skill', 'project-implementation', 'unversioned', 'summary.json'),
+    `${JSON.stringify({
+      aggregateId: 'agg-1',
+      generatedAt: '2026-05-17T13:00:00.000Z',
+      skill: {
+        skillKey: 'project-implementation',
+        skillName: 'project-implementation',
+        skillPath: '/Users/handy/.claude/skills/project-implementation/SKILL.md',
+      },
+      window: {
+        from: '2026-05-17T12:00:00.000Z',
+        to: '2026-05-17T12:30:00.000Z',
+        sessionCount: 1,
+        usageFactCount: 2,
+        roundCount: 2,
+      },
+      counts: {
+        totalReads: 2,
+        topAgentReads: 2,
+        subagentReads: 0,
+        uniqueTaskShapes: 1,
+      },
+      signalsAfterRead: {
+        advance: 1,
+        correct: 0,
+        supplement: 1,
+        continue: 0,
+        clarify: 0,
+        unknown: 0,
+      },
+      taskShapeBreakdown: [],
+      evidencePools: {
+        representativeFactIds: ['fact-1'],
+        correctionSoonFactIds: [],
+        subagentFactIds: [],
+        ambiguousFactIds: [],
+      },
+      artifactRefs: {
+        usageFactFiles: ['/tmp/a.json'],
+      },
+    }, null, 2)}\n`,
+    'utf-8',
+  );
+
+  await writeFile(
+    path.join(rootDir, 'aggregates', 'by-skill', 'skills-maker', 'unversioned', 'summary.json'),
+    `${JSON.stringify({
+      aggregateId: 'agg-2',
+      generatedAt: '2026-05-17T14:00:00.000Z',
+      skill: {
+        skillKey: 'skills-maker',
+        skillName: 'skills-maker',
+        skillPath: '/Users/handy/.claude/skills/skills-maker/SKILL.md',
+      },
+      window: {
+        from: '2026-05-17T13:00:00.000Z',
+        to: '2026-05-17T13:30:00.000Z',
+        sessionCount: 1,
+        usageFactCount: 1,
+        roundCount: 1,
+      },
+      counts: {
+        totalReads: 1,
+        topAgentReads: 1,
+        subagentReads: 0,
+        uniqueTaskShapes: 1,
+      },
+      signalsAfterRead: {
+        advance: 0,
+        correct: 1,
+        supplement: 0,
+        continue: 0,
+        clarify: 0,
+        unknown: 0,
+      },
+      taskShapeBreakdown: [],
+      evidencePools: {
+        representativeFactIds: ['fact-2'],
+        correctionSoonFactIds: ['fact-2'],
+        subagentFactIds: [],
+        ambiguousFactIds: [],
+      },
+      artifactRefs: {
+        usageFactFiles: ['/tmp/b.json'],
+      },
+    }, null, 2)}\n`,
+    'utf-8',
+  );
+
+  const allSummaries = await listSkillAggregateSummaries({ rootDir });
+  assert.equal(allSummaries.length, 2);
+  assert.equal(allSummaries[0]?.skill.skillKey, 'skills-maker');
+  assert.equal(allSummaries[1]?.skill.skillKey, 'project-implementation');
+
+  const filtered = await listSkillAggregateSummaries({ rootDir, targetSkill: 'project-implementation' });
+  assert.equal(filtered.length, 1);
+  assert.equal(filtered[0]?.skill.skillKey, 'project-implementation');
+});
+
+test('readLatestSkillExploreSessionIndex and resolveSkillExploreArtifactRoot expose latest session pointer', async () => {
+  const rootDir = await mkdtemp(path.join(tmpdir(), 'skill-explore-latest-index-'));
+  await mkdir(path.join(rootDir, 'latest'), { recursive: true });
+  await writeFile(
+    path.join(rootDir, 'latest', 'latest-session.json'),
+    `${JSON.stringify({
+      sessionFile: '/tmp/demo.jsonl',
+      sessionKey: 'demo-session',
+      updatedAt: '2026-05-17T15:00:00.000Z',
+      totalSkillReads: 7,
+      summaryFile: '/tmp/summary.json',
+      roundFactsFile: '/tmp/round-facts.json',
+    }, null, 2)}\n`,
+    'utf-8',
+  );
+
+  const latest = await readLatestSkillExploreSessionIndex(rootDir);
+  assert.equal(latest?.sessionKey, 'demo-session');
+  assert.equal(latest?.totalSkillReads, 7);
+  assert.equal(resolveSkillExploreArtifactRoot(rootDir), rootDir);
 });
 
 test('runSkillExploreAgentEndBridge auto-persists aggregate and ready bundle for unread receipt state', async () => {
