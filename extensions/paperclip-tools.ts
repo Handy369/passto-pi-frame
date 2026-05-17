@@ -11,7 +11,7 @@
  *   /paperclip-agent-health [--company] [--auto-recover]
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 // Paperclip API 配置
