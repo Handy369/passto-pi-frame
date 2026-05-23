@@ -1,0 +1,28 @@
+{
+  "name": "browser-runtime-observation",
+  "version": "0.1.0",
+  "description": "High-level browser runtime observation scaffold for Pi CLI. Registers capability-status and observation contract tools for browser-facing runtime proof workflows.",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "extension",
+    "browser",
+    "runtime",
+    "observation"
+  ],
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "./scripts/smoke.sh",
+    "test:smoke": "./scripts/smoke.sh"
+  },
+  "pi": {
+    "extensions": [
+      "index.ts"
+    ]
+  }
+}

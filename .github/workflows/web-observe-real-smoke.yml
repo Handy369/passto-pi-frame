@@ -1,0 +1,129 @@
+name: web-observe-real-smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * 1'
+
+jobs:
+  real-smoke:
+    name: Real smoke proof via chrome-devtools-mcp
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            browser-observe/package-lock.json
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install browser-observe dependencies
+        run: npm --prefix ./browser-observe ci
+
+      - name: Install Chrome for Testing
+        run: |
+          npx -y @puppeteer/browsers install chrome@stable --path ./.browsers
+          CHROME_PATH=$(find ./.browsers -type f \( -path '*/chrome-linux64/chrome' -o -name 'google-chrome' -o -name 'chrome' \) | head -n 1)
+          if [ -z "$CHROME_PATH" ]; then
+            echo 'Failed to locate installed Chrome executable' >&2
+            exit 1
+          fi
+          echo "BROWSER_OBSERVE_CHROME_EXECUTABLE_PATH=$CHROME_PATH" >> "$GITHUB_ENV"
+          echo "Resolved Chrome path: $CHROME_PATH"
+          "$CHROME_PATH" --version
+
+      - name: Run real smoke scenarios
+        id: smoke
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run test:web-observe:real:all | tee browser-observe/run.log
+
+      - name: Build workflow summary
+        id: summarize
+        if: always()
+        shell: bash
+        env:
+          SMOKE_OUTCOME: ${{ steps.smoke.outcome }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const logPath = 'browser-observe/run.log';
+          let markerFound = false;
+          let result = { ok: false, scenarioCount: 0, failed: 0, results: [] };
+
+          if (fs.existsSync(logPath)) {
+            const content = fs.readFileSync(logPath, 'utf8');
+            const markerLine = content
+              .split('\n')
+              .map((line) => line.trim())
+              .reverse()
+              .find((line) => line.startsWith('RUN_ALL_RESULT_JSON::'));
+            if (markerLine) {
+              markerFound = true;
+              result = JSON.parse(markerLine.slice('RUN_ALL_RESULT_JSON::'.length));
+            }
+          }
+
+          const lines = [
+            '# Web Observe Real Smoke',
+            '',
+            `- Smoke step outcome: ${process.env.SMOKE_OUTCOME}`,
+            `- Parsed result marker: ${markerFound ? 'found' : 'missing'}`,
+            `- Overall verdict: ${result.ok ? 'PASS' : 'FAIL'}`,
+            `- Scenario count: ${result.scenarioCount ?? result.results.length}`,
+            `- Failed scenarios: ${result.failed ?? 0}`,
+            '',
+          ];
+
+          if (Array.isArray(result.results) && result.results.length > 0) {
+            lines.push('| Scenario | Verdict | Title | Console Errors | Failed Requests | Exit | Artifact | Error |');
+            lines.push('| --- | --- | --- | ---: | ---: | ---: | --- | --- |');
+            for (const item of result.results) {
+              lines.push(`| ${item.scenario ?? ''} | ${item.verdict ?? 'UNKNOWN'} | ${item.title ?? ''} | ${item.consoleErrors ?? ''} | ${item.failedRequests ?? ''} | ${item.exitCode ?? ''} | \`${item.artifactRoot ?? ''}\` | ${item.error ?? ''} |`);
+            }
+          } else {
+            lines.push('No parsed scenario results were found. Check `browser-observe/run.log`.');
+          }
+
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `overall_ok=${result.ok ? 'true' : 'false'}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `marker_found=${markerFound ? 'true' : 'false'}\n`);
+          NODE
+
+      - name: Upload browser-observe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-observe-artifacts-${{ github.run_id }}
+          path: |
+            browser-observe/artifacts
+            browser-observe/run.log
+          if-no-files-found: warn
+
+      - name: Fail workflow when smoke scenarios fail
+        if: always()
+        shell: bash
+        run: |
+          if [ "${{ steps.summarize.outputs.marker_found }}" != "true" ]; then
+            echo 'Missing RUN_ALL_RESULT_JSON marker in browser-observe/run.log' >&2
+            exit 1
+          fi
+          if [ "${{ steps.summarize.outputs.overall_ok }}" != "true" ]; then
+            echo 'One or more real smoke scenarios failed' >&2
+            exit 1
+          fi
