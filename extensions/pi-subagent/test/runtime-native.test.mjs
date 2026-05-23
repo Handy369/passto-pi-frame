@@ -34,7 +34,7 @@ import {
   normalizeThinkingLevel,
   runSubagent,
 } from "../../../lib/passto-agent-runtime/index.ts";
-import { loadAgentProfile } from "../../../lib/passto-agent-runtime/agents.ts";
+import { loadAgentProfile, deriveRuntimeWarnings } from "../../../lib/passto-agent-runtime/agents.ts";
 
 const RUNTIME_CONFIG_PATH = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -67,6 +67,166 @@ test("normalizeThinkingLevel preserves official pi thinking levels", () => {
   assert.equal(normalizeThinkingLevel(" minimal "), "minimal");
   assert.equal(normalizeThinkingLevel("xhigh"), "xhigh");
   assert.equal(normalizeThinkingLevel("LOW"), "low");
+});
+
+test("deriveRuntimeWarnings flags risky provider-without-extension inheritance path", () => {
+  const warnings = deriveRuntimeWarnings({
+    requested: {
+      prompt: "Task: test",
+      cwd: process.cwd(),
+    },
+    resolved: {
+      prompt: "Task: test",
+      cwd: process.cwd(),
+      provider: "PASSTOAI-TW",
+    },
+    inherited: {
+      fallbackProvider: "PASSTOAI-TW",
+      fallbackModel: undefined,
+      extensionArgs: ["--extension", "/tmp/provider.ts"],
+    },
+  });
+
+  assert.ok(warnings.some((warning) => warning.code === "provider_without_extension_inheritance"));
+  assert.ok(warnings.some((warning) => warning.code === "provider_with_no_child_extensions"));
+});
+
+test("deriveRuntimeWarnings flags profile model override of parent model", () => {
+  const warnings = deriveRuntimeWarnings({
+    requested: {
+      prompt: "Task: test",
+      cwd: process.cwd(),
+    },
+    resolved: {
+      prompt: "Task: test",
+      cwd: process.cwd(),
+      model: "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+    },
+    profile: {
+      name: "reviewer",
+      model: "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+      systemPrompt: "review",
+      filePath: "/tmp/reviewer.md",
+    },
+    inherited: {
+      fallbackProvider: undefined,
+      fallbackModel: "openai/gpt-4o",
+      extensionArgs: [],
+    },
+  });
+
+  assert.ok(warnings.some((warning) => warning.code === "profile_model_overrides_parent_model"));
+});
+
+test("buildPiArgs forwards explicit provider before model", () => {
+  const args = buildPiArgs({
+    options: {
+      prompt: "hello",
+      cwd: process.cwd(),
+      provider: "PASSTOAI-TW",
+      model: "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+    },
+    inherited: {
+      extensionArgs: [],
+      alwaysProxy: [],
+      fallbackNoTools: false,
+    },
+  });
+
+  assert.deepEqual(
+    args.slice(0, 9),
+    [
+      "--mode",
+      "json",
+      "-p",
+      "--no-session",
+      "--provider",
+      "PASSTOAI-TW",
+      "--model",
+      "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+      "hello",
+    ],
+  );
+});
+
+test("buildPiArgs falls back to inherited provider when options.provider is omitted", () => {
+  const args = buildPiArgs({
+    options: {
+      prompt: "hello",
+      cwd: process.cwd(),
+    },
+    inherited: {
+      extensionArgs: [],
+      alwaysProxy: [],
+      fallbackProvider: "PASSTOAI-TW",
+      fallbackNoTools: false,
+    },
+  });
+
+  assert.deepEqual(
+    args.slice(0, 7),
+    ["--mode", "json", "-p", "--no-session", "--provider", "PASSTOAI-TW", "hello"],
+  );
+});
+
+test("buildPiArgs inherits parent extensions only when enabled", () => {
+  const inherited = {
+    extensionArgs: ["--extension", "/tmp/provider.ts"],
+    alwaysProxy: [],
+    fallbackNoTools: false,
+  };
+
+  const disabledArgs = buildPiArgs({
+    options: {
+      prompt: "hello",
+      cwd: process.cwd(),
+    },
+    inherited,
+  });
+  assert.deepEqual(disabledArgs.slice(0, 4), ["--mode", "json", "-p", "--no-session"]);
+
+  const enabledArgs = buildPiArgs({
+    options: {
+      prompt: "hello",
+      cwd: process.cwd(),
+      inheritParentExtensions: true,
+    },
+    inherited,
+  });
+  assert.deepEqual(
+    enabledArgs.slice(0, 6),
+    ["--mode", "json", "--extension", "/tmp/provider.ts", "-p", "--no-session"],
+  );
+});
+
+test("buildPiArgs keeps explicit child extensions separate from inherited ones", () => {
+  const args = buildPiArgs({
+    options: {
+      prompt: "hello",
+      cwd: process.cwd(),
+      inheritParentExtensions: true,
+      extensions: ["/tmp/child.ts"],
+    },
+    inherited: {
+      extensionArgs: ["--extension", "/tmp/parent.ts"],
+      alwaysProxy: [],
+      fallbackNoTools: false,
+    },
+  });
+
+  assert.deepEqual(
+    args.slice(0, 8),
+    [
+      "--mode",
+      "json",
+      "--extension",
+      "/tmp/parent.ts",
+      "-p",
+      "--no-session",
+      "--extension",
+      "/tmp/child.ts",
+    ],
+  );
 });
 
 test("buildPiArgs forwards minimal/xhigh without legacy downgrades", () => {

@@ -25,7 +25,13 @@ export interface SingleResult {
   messages: Message[];
   stderr: string;
   usage: UsageStats;
+  provider?: string;
   model?: string;
+  thinking?: string;
+  inheritParentExtensions?: boolean;
+  inheritedExtensions?: string[];
+  explicitExtensions?: string[];
+  warnings?: Array<{ code: string; message: string }>;
   stopReason?: string;
   errorMessage?: string;
   sawAgentEnd?: boolean;

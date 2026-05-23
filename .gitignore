@@ -12,3 +12,12 @@ extensions/agent-web-search-pro/config.json
 .tmp/
 .cache/
 .ralph/
+.artifacts/
+artifacts/
+handy-note.md
+extensions/passto-desk/files/_tmp-*.domain.json
+extensions/passto-desk/files/_verify-*.domain.json
+
+# Excalidraw working files
+*.excalidraw
+*.domain.json

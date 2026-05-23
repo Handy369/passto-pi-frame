@@ -69,7 +69,13 @@ function renderStatusSection(
 		!r.errorMessage &&
 		(r.recentActivity?.length ?? 0) === 0 &&
 		!r.lastAssistantText &&
-		!r.currentToolArgsPreview
+		!r.currentToolArgsPreview &&
+		!r.provider &&
+		!r.model &&
+		!r.thinking &&
+		!r.extensions?.length &&
+		!r.inheritedExtensions?.length &&
+		r.inheritParentExtensions === undefined
 	) {
 		return;
 	}
@@ -98,6 +104,42 @@ function renderStatusSection(
 		if (r.contractReason) {
 			container.addChild(new Text(theme.fg("error", `reason: ${r.contractReason}`), 0, 0));
 		}
+	}
+	if (r.warnings && r.warnings.length > 0) {
+		for (const warning of r.warnings) {
+			container.addChild(new Text(theme.fg("warning", `warning[${warning.code}]: ${truncate(warning.message, 220)}`), 0, 0));
+		}
+	}
+	if (r.provider || r.model || r.thinking) {
+		const runtimeParts: string[] = [];
+		if (r.provider) runtimeParts.push(`provider=${truncate(r.provider, 64)}`);
+		if (r.model) runtimeParts.push(`model=${truncate(r.model, 80)}`);
+		if (r.thinking) runtimeParts.push(`thinking=${r.thinking}`);
+		container.addChild(new Text(theme.fg("dim", runtimeParts.join(" · ")), 0, 0));
+	}
+	if (r.inheritParentExtensions !== undefined || (r.inheritedExtensions?.length ?? 0) > 0) {
+		const inheritedText = r.inheritedExtensions && r.inheritedExtensions.length > 0
+			? r.inheritedExtensions.map((x) => truncate(x, 48)).join(", ")
+			: "(none)";
+		container.addChild(
+			new Text(
+				theme.fg(
+					"dim",
+					`inheritParentExtensions=${r.inheritParentExtensions === true ? "true" : "false"} · inheritedExtensions: ${inheritedText}`,
+				),
+				0,
+				0,
+			),
+		);
+	}
+	if (r.explicitExtensions && r.explicitExtensions.length > 0) {
+		container.addChild(
+			new Text(
+				theme.fg("dim", `explicitExtensions: ${r.explicitExtensions.map((x) => truncate(x, 48)).join(", ")}`),
+				0,
+				0,
+			),
+		);
 	}
 	if (r.extensions && r.extensions.length > 0) {
 		container.addChild(new Text(theme.fg("dim", `extensions: ${r.extensions.map((x) => truncate(x, 48)).join(", ")}`), 0, 0));
@@ -376,6 +418,12 @@ function renderSingleCollapsed(
 		text += `\n${theme.fg("error", `Contract failed: ${r.contractReason || r.executionContract || "unknown"}`)}`;
 	} else {
 		text += `\n${theme.fg(error ? "error" : "muted", getResultSummaryText(r))}`;
+	}
+
+	if (r.warnings && r.warnings.length > 0) {
+		for (const warning of r.warnings.slice(0, 2)) {
+			text += `\n${theme.fg("warning", `Warning: ${truncate(warning.message, 140)}`)}`;
+		}
 	}
 
 	if (r.executionContract && r.contractSatisfied === true) {

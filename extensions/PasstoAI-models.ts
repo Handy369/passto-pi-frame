@@ -54,7 +54,14 @@ function trimModelName(name: string): string {
 function lookupModelInCache(
   cache: Record<string, any>,
   modelName: string
-): { contextWindow: number; reasoning: boolean; cost: any; maxTokens: number; found: boolean } {
+): {
+  contextWindow: number;
+  reasoning: boolean;
+  cost: any;
+  maxTokens: number;
+  multimodal: boolean;
+  found: boolean;
+} {
   // 先裁剪后缀，再规范化
   const trimmed = trimModelName(modelName);
   const normalizedInput = normalize(trimmed);
@@ -64,6 +71,7 @@ function lookupModelInCache(
     reasoning: boolean;
     cost: any;
     maxTokens: number;
+    multimodal: boolean;
     score: number; // 匹配质量：精确匹配最优
   };
 
@@ -91,16 +99,25 @@ function lookupModelInCache(
 
       const limit = model.limit || {};
       const cost = model.cost || {};
+      const modality = model.modality || {};
       // 上下文窗口取值：有 input 取 input，否则取 context - output
       const rawCtx = limit.input != null
         ? limit.input
         : (limit.context || 0) - (limit.output || 0);
       const contextWindow = rawCtx > 0 ? rawCtx : 131072;
+      const multimodal = Boolean(modality.imageInput || modality.image_input || modality.image);
 
       const candidate: Match = {
-        contextWindow, reasoning: model.reasoning ?? false,
-        cost: { input: cost.input ?? 0, output: cost.output ?? 0, cacheRead: cost.cache_read ?? 0, cacheWrite: cost.cache_write ?? 0 },
+        contextWindow,
+        reasoning: model.reasoning ?? false,
+        cost: {
+          input: cost.input ?? 0,
+          output: cost.output ?? 0,
+          cacheRead: cost.cache_read ?? 0,
+          cacheWrite: cost.cache_write ?? 0,
+        },
         maxTokens: Math.min(limit.output || 16384, 8192),
+        multimodal,
         score,
       };
 
@@ -117,9 +134,12 @@ function lookupModelInCache(
   }
 
   return {
-    contextWindow: 131072, reasoning: false,
+    contextWindow: 131072,
+    reasoning: false,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    maxTokens: 8192, found: false,
+    maxTokens: 8192,
+    multimodal: /gpt[-_]?5(?:\.[\w-]+)?/i.test(modelName),
+    found: false,
   };
 }
 
@@ -194,7 +214,7 @@ export default async function (pi: ExtensionAPI) {
           name: m.id,
           api: "openai-completions",
           reasoning: matched.reasoning,
-          input: ["text"],
+          input: matched.multimodal ? ["text", "image"] : ["text"],
           cost: matched.cost,
           contextWindow: matched.contextWindow,
           maxTokens: matched.maxTokens,

@@ -91,6 +91,79 @@ Examples:
 
 If omitted, mode defaults to `spawn`.
 
+### Explicit child runtime overrides
+
+`subagent` also supports explicit child runtime overrides at the tool-call level:
+
+- `provider`
+- `model`
+- `thinking`
+- `inheritParentExtensions`
+- `extensions`
+
+Example:
+
+```json
+{
+  "agent": "reviewer",
+  "task": "Audit the current diff for merge readiness",
+  "provider": "PASSTOAI-TW",
+  "model": "PASSTOAI-TW/HubTo-TW/qwen3.6-plus",
+  "thinking": "medium",
+  "inheritParentExtensions": true
+}
+```
+
+These values are **explicit child overrides**. When present, they take precedence over:
+- agent profile defaults
+- inherited parent CLI fallback values
+
+### Provider / model / extension inheritance notes
+
+Current runtime behavior is intentionally explicit:
+
+- `provider` may come from:
+  1. explicit subagent tool args
+  2. agent profile frontmatter
+  3. inherited parent CLI fallback
+- `model` may come from:
+  1. explicit subagent tool args
+  2. agent profile frontmatter
+  3. inherited parent CLI fallback
+- parent `--extension` / `--no-extensions` are **not inherited unless** `inheritParentExtensions: true`
+- explicit child `extensions` are independent from inherited parent extensions and may be combined with them
+
+This matters when a provider is registered by a parent extension rather than being built into Pi.
+If a child uses that provider but does not inherit the parent extension surface, the child may fail to resolve the provider.
+
+### Runtime warnings
+
+`subagent` now surfaces runtime warnings for risky but still-allowed configurations.
+Current warning codes include:
+
+- `provider_without_extension_inheritance`
+  - Child has a provider
+  - Parent has extension args
+  - Child does not inherit parent extensions
+  - Child also has no explicit extensions
+- `provider_with_no_child_extensions`
+  - Child has a provider
+  - Child has neither inherited nor explicit extensions
+  - Safe only if that provider is built-in or otherwise globally available
+- `profile_model_overrides_parent_model`
+  - Parent has an inherited model
+  - Child did not explicitly request a model
+  - Agent profile model silently wins over the parent model
+
+Warnings are shown in the subagent result UI to make these precedence and extension-surface issues visible instead of implicit.
+
+### Recommended practice
+
+- Prefer explicit `model` when model choice matters.
+- Prefer explicit `inheritParentExtensions: true` when child execution depends on provider/tool registration from parent extensions.
+- Prefer explicit child `extensions` when you want a stable, auditable extension surface.
+- Avoid relying on inherited parent model/provider behavior unless you intentionally want fallback semantics.
+
 ### Explicit child extensions
 
 `subagent` can inject extra child extensions explicitly via `extensions`.

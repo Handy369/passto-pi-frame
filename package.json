@@ -4,6 +4,12 @@
   "keywords": [
     "pi-package"
   ],
+  "scripts": {
+    "test:browser-runtime-observation": "./extensions/browser-runtime-observation/scripts/smoke.sh",
+    "test:web-observe:real": "npm --prefix ./browser-observe run smoke:real",
+    "test:web-observe:real:all": "npm --prefix ./browser-observe run smoke:real:all",
+    "test:web-observe:contract": "npm --prefix ./browser-observe run test:contract"
+  },
   "dependencies": {
     "typebox": "^1.1.33"
   },

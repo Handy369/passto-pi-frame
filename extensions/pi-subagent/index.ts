@@ -44,6 +44,21 @@ const TaskItem = Type.Object({
   cwd: Type.Optional(
     Type.String({ description: "Working directory for this agent's process" }),
   ),
+  provider: Type.Optional(
+    Type.String({ description: "Override child provider for this task." }),
+  ),
+  model: Type.Optional(
+    Type.String({ description: "Override child model for this task." }),
+  ),
+  thinking: Type.Optional(
+    Type.String({ description: "Override child thinking level for this task." }),
+  ),
+  inheritParentExtensions: Type.Optional(
+    Type.Boolean({
+      description:
+        "Whether to inherit parent --extension / --no-extensions into the child process.",
+    }),
+  ),
   extensions: Type.Optional(
     Type.Array(Type.String(), {
       description: "Extra child extensions to inject via --extension.",
@@ -94,6 +109,21 @@ const SubagentParams = Type.Object({
   cwd: Type.Optional(
     Type.String({
       description: "Working directory for the agent process (single mode only)",
+    }),
+  ),
+  provider: Type.Optional(
+    Type.String({ description: "Override child provider for single mode." }),
+  ),
+  model: Type.Optional(
+    Type.String({ description: "Override child model for single mode." }),
+  ),
+  thinking: Type.Optional(
+    Type.String({ description: "Override child thinking level for single mode." }),
+  ),
+  inheritParentExtensions: Type.Optional(
+    Type.Boolean({
+      description:
+        "Whether to inherit parent --extension / --no-extensions into the child process.",
     }),
   ),
   extensions: Type.Optional(
@@ -342,7 +372,16 @@ function toRunningSingleResult(
   agent: string,
   task: string,
   progress: SubagentProgress,
-  metadata?: { extensions?: string[]; executionContract?: string },
+  metadata?: {
+    provider?: string;
+    model?: string;
+    thinking?: string;
+    inheritParentExtensions?: boolean;
+    inheritedExtensions?: string[];
+    explicitExtensions?: string[];
+    extensions?: string[];
+    executionContract?: string;
+  },
 ): SingleResult {
   return {
     agent,
@@ -351,6 +390,12 @@ function toRunningSingleResult(
     messages: [],
     stderr: "",
     usage: toUsageStats(progress.usage),
+    provider: metadata?.provider,
+    model: metadata?.model,
+    thinking: metadata?.thinking,
+    inheritParentExtensions: metadata?.inheritParentExtensions,
+    inheritedExtensions: metadata?.inheritedExtensions,
+    explicitExtensions: metadata?.explicitExtensions,
     stopReason: progress.stopReason,
     errorMessage: progress.errorMessage,
     phase: progress.phase,
@@ -368,7 +413,16 @@ function toSingleResult(
   agent: string,
   task: string,
   result: SubagentRunResult,
-  metadata?: { extensions?: string[]; executionContract?: string },
+  metadata?: {
+    provider?: string;
+    model?: string;
+    thinking?: string;
+    inheritParentExtensions?: boolean;
+    inheritedExtensions?: string[];
+    explicitExtensions?: string[];
+    extensions?: string[];
+    executionContract?: string;
+  },
 ): SingleResult {
   return {
     agent,
@@ -377,6 +431,14 @@ function toSingleResult(
     messages: result.messages as any[],
     stderr: result.stderr,
     usage: toUsageStats(result.usage),
+    provider: result.provenance.providerName ?? metadata?.provider,
+    model: result.provenance.modelName ?? metadata?.model,
+    thinking: result.provenance.thinking ?? metadata?.thinking,
+    inheritParentExtensions:
+      result.provenance.inheritParentExtensions ?? metadata?.inheritParentExtensions,
+    inheritedExtensions:
+      result.provenance.inheritedExtensions ?? metadata?.inheritedExtensions,
+    warnings: result.provenance.warnings,
     stopReason: result.stopReason,
     errorMessage: result.errorMessage,
     sawAgentEnd: result.progress.phase === "done" || result.progress.phase === "finishing",
@@ -546,6 +608,10 @@ export default function (pi: ExtensionAPI) {
             params.agent,
             params.task,
             params.cwd,
+            params.provider,
+            params.model,
+            params.thinking,
+            params.inheritParentExtensions,
             params.extensions,
             executionContract ?? undefined,
             delegationMode,
@@ -580,6 +646,10 @@ export default function (pi: ExtensionAPI) {
     agentName: string,
     task: string,
     cwd: string | undefined,
+    provider: string | undefined,
+    model: string | undefined,
+    thinking: string | undefined,
+    inheritParentExtensions: boolean | undefined,
     extensions: string[] | undefined,
     executionContract: string | undefined,
     delegationMode: DelegationMode,
@@ -608,6 +678,10 @@ export default function (pi: ExtensionAPI) {
           agent: agentName,
           prompt: `Task: ${task}`,
           cwd: cwd ?? defaultCwd,
+          provider,
+          model,
+          thinking,
+          inheritParentExtensions,
           extensions,
           sessionMode: delegationMode,
           forkSessionSnapshotJsonl,
@@ -632,7 +706,15 @@ export default function (pi: ExtensionAPI) {
                 },
               ],
               details: makeDetails("single")([
-                toRunningSingleResult(agentName, task, progress, { extensions, executionContract }),
+                toRunningSingleResult(agentName, task, progress, {
+                  provider,
+                  model,
+                  thinking,
+                  inheritParentExtensions,
+                  explicitExtensions: extensions,
+                  extensions,
+                  executionContract,
+                }),
               ]),
             });
           },
@@ -640,7 +722,15 @@ export default function (pi: ExtensionAPI) {
         signal,
       );
 
-      const result = toSingleResult(agentName, task, runtimeResult, { extensions, executionContract });
+      const result = toSingleResult(agentName, task, runtimeResult, {
+        provider,
+        model,
+        thinking,
+        inheritParentExtensions,
+        explicitExtensions: extensions,
+        extensions,
+        executionContract,
+      });
       if (executionContract === "ralph-loop") {
         const contractResult = verifyRalphLoop({ rawEvents: runtimeResult.rawEvents, task, cwd: cwd ?? defaultCwd });
         result.contractSatisfied = contractResult.contractSatisfied;
@@ -687,7 +777,7 @@ export default function (pi: ExtensionAPI) {
   }
 
   async function executeParallel(
-    tasks: Array<{ agent: string; task: string; cwd?: string; extensions?: string[]; executionContract?: string; completionPolicy?: string; idleTimeoutMs?: number; terminateGraceMs?: number }>,
+    tasks: Array<{ agent: string; task: string; cwd?: string; provider?: string; model?: string; thinking?: string; inheritParentExtensions?: boolean; extensions?: string[]; executionContract?: string; completionPolicy?: string; idleTimeoutMs?: number; terminateGraceMs?: number }>,
     delegationMode: DelegationMode,
     forkSessionSnapshotJsonl: string | undefined,
     defaultCwd: string,
@@ -752,6 +842,10 @@ export default function (pi: ExtensionAPI) {
             agent: t.agent,
             prompt: `Task: ${t.task}`,
             cwd: t.cwd ?? defaultCwd,
+            provider: t.provider,
+            model: t.model,
+            thinking: t.thinking,
+            inheritParentExtensions: t.inheritParentExtensions,
             extensions: t.extensions,
             sessionMode: delegationMode,
             forkSessionSnapshotJsonl,
@@ -768,6 +862,11 @@ export default function (pi: ExtensionAPI) {
           {
             onProgress(progress) {
               allResults[index] = toRunningSingleResult(t.agent, t.task, progress, {
+                provider: t.provider,
+                model: t.model,
+                thinking: t.thinking,
+                inheritParentExtensions: t.inheritParentExtensions,
+                explicitExtensions: t.extensions,
                 extensions: t.extensions,
                 executionContract: taskExecutionContract,
               });
@@ -778,6 +877,11 @@ export default function (pi: ExtensionAPI) {
         );
 
         const result = toSingleResult(t.agent, t.task, runtimeResult, {
+          provider: t.provider,
+          model: t.model,
+          thinking: t.thinking,
+          inheritParentExtensions: t.inheritParentExtensions,
+          explicitExtensions: t.extensions,
           extensions: t.extensions,
           executionContract: taskExecutionContract,
         });
