@@ -33,6 +33,9 @@ function makeConfig(): PasstoContextConfig {
       maxContextPercent: 8,
       summaryCacheSize: 8,
       maxGoalStateActive: 8,
+      maxGoalTreeDepth: 5,
+      maxGoalTreeNodes: 20,
+      draftGoalEnabled: false,
       subagentModel: 'gemini-3-flash',
       subagentModelProvider: 'opencode',
       maxReflectorTokens: 1500,
@@ -42,6 +45,7 @@ function makeConfig(): PasstoContextConfig {
       maxPrinciples: 100,
       orchestratorToolPrefixes: ['passto_planner_'],
       widgetNoticeMaxChars: 24,
+      lineageSummaryMaxDepth: 8,
     },
     logEnabled: true,
     logLevel: 'debug',
@@ -89,6 +93,18 @@ function makeGrcState(): GRCState {
         type: 'advance',
         confidence: 0.9,
         evidence: 'still active',
+      },
+      lastCertaintyAssessment: {
+        dimensions: {
+          why: 'closed',
+          what: 'closed',
+          flow: 'partial',
+          structure: 'closed',
+          runtimeProof: 'open',
+        },
+        keyGaps: ['runtimeProof: 尚未补齐 before_agent_start 的运行态证据'],
+        nextStepType: 'run_tests',
+        confidence: 0.84,
       },
       summaryCache: [
         {
@@ -187,6 +203,7 @@ test('before_agent_start event handler auto-starts curator jobs when runtime is 
   let startCalls = 0;
   let receivedTargets: string | null = null;
   let receivedCtx: unknown = null;
+  const debugLogs: string[] = [];
   const ctx = makeCtx();
 
   const handler = createBeforeAgentStartHandler({
@@ -206,7 +223,13 @@ test('before_agent_start event handler auto-starts curator jobs when runtime is 
       receivedCtx = startCtx;
       receivedTargets = targets;
     },
-    logger: null,
+    logger: {
+      debug(message: string) {
+        debugLogs.push(message);
+      },
+      warn() {},
+      error() {},
+    },
   });
 
   const result = await handler(
@@ -219,6 +242,123 @@ test('before_agent_start event handler auto-starts curator jobs when runtime is 
   assert.equal(receivedTargets, 'curator');
   assert.ok(result);
   assert.match(result.systemPrompt, /^BASE SYSTEM/);
+  assert.ok(debugLogs.some((line) => /before_agent_start injection summary:/.test(line)));
+  assert.ok(debugLogs.some((line) => /nextStepType=run_tests/.test(line)));
+  assert.ok(debugLogs.some((line) => /policyConfidence=0\.84/.test(line)));
+  assert.ok(debugLogs.some((line) => /policySource=certainty-assessment/.test(line)));
+});
+
+test('before_agent_start event handler prefers x-node policy projection in debug summary when sidecar exists', async () => {
+  const debugLogs: string[] = [];
+  const state = makeGrcState();
+  state.curator.lastUserGoalTree = {
+    version: 1,
+    agentRound: 4,
+    updatedAt: '2026-05-13T12:00:00.000Z',
+    currentFocusUserGoalId: 'goal-1',
+    rootUserGoalIds: ['goal-1'],
+    userGoals: [
+      {
+        id: 'goal-1',
+        parentId: null,
+        assertion: '这个目标在 orchestrator guard 下不应被注入',
+        status: 'planning',
+        xNodeModelId: 'xnode-goal-1',
+        sinceRound: 2,
+        lastTouchedRound: 4,
+      },
+    ],
+  };
+  state.curator.lastXNodeModels = [
+    {
+      version: 1,
+      userGoalId: 'goal-1',
+      agentRound: 4,
+      updatedAt: '2026-05-13T12:00:00.000Z',
+      currentFocusXNodeId: 'goal-1',
+      rootXNodeIds: ['goal-1'],
+      nodes: [],
+      latestPolicyProjection: {
+        xNodeId: 'goal-1',
+        derivedAtRound: 4,
+        dimensions: {
+          why: 'partial',
+          what: 'partial',
+          flow: 'partial',
+          structure: 'partial',
+          runtimeProof: 'open',
+        },
+        keyGaps: ['runtimeProof: 尚未补齐 before_agent_start 的运行态证据'],
+        nextStepType: 'plan_repair',
+        confidence: 0.52,
+        guidance: ['当前优先补计划/定义/依赖缺口，再继续实现。'],
+      },
+    },
+  ];
+
+  const handler = createBeforeAgentStartHandler({
+    getConfig: () => makeConfig(),
+    getGRCState: () => state,
+    getPrinciples: () => null,
+    getMemory: () => null,
+    getCuratorPromise: () => null,
+    getOrchestrationSuspended: () => false,
+    updateOrchestrationSuspension() {},
+    getSessionScopeGuardReason: () => null,
+    isCurrentSessionStateReady: () => true,
+    isRuntimeEnabled: () => true,
+    isGRCAutoProcessingAllowed: () => true,
+    startGRCBackgroundJobs() {},
+    logger: {
+      debug(message: string) {
+        debugLogs.push(message);
+      },
+      warn() {},
+      error() {},
+    },
+  });
+
+  const result = await handler(
+    { prompt: '继续', systemPrompt: 'BASE SYSTEM' },
+    makeCtx(),
+  );
+
+  assert.ok(result);
+  assert.ok(debugLogs.some((line) => /nextStepType=plan_repair/.test(line)));
+  assert.ok(debugLogs.some((line) => /policyConfidence=0\.52/.test(line)));
+  assert.ok(debugLogs.some((line) => /policySource=x-node-policy/.test(line)));
+});
+
+test('before_agent_start event handler stays projection-first when draftGoalEnabled is on', async () => {
+  const cfg = makeConfig();
+  cfg.grc.draftGoalEnabled = true;
+
+  const handler = createBeforeAgentStartHandler({
+    getConfig: () => cfg,
+    getGRCState: () => makeGrcState(),
+    getPrinciples: () => null,
+    getMemory: () => null,
+    getCuratorPromise: () => null,
+    getOrchestrationSuspended: () => false,
+    updateOrchestrationSuspension() {},
+    getSessionScopeGuardReason: () => null,
+    isCurrentSessionStateReady: () => true,
+    isRuntimeEnabled: () => true,
+    isGRCAutoProcessingAllowed: () => true,
+    startGRCBackgroundJobs() {},
+    logger: null,
+  });
+
+  const result = await handler(
+    { prompt: '继续', systemPrompt: 'BASE SYSTEM' },
+    makeCtx(),
+  );
+
+  assert.ok(result);
+  assert.match(result.systemPrompt, /applyUserGoalProjection/);
+  assert.match(result.systemPrompt, /reviewState/);
+  assert.doesNotMatch(result.systemPrompt, /Draft Goal Runtime 协议/);
+  assert.doesNotMatch(result.systemPrompt, /draftGoalOp/);
 });
 
 test('before_agent_start event handler does not auto-start curator when curatorPromise already exists', async () => {
@@ -252,6 +392,7 @@ test('before_agent_start event handler does not auto-start curator when curatorP
   assert.ok(result);
   assert.match(result.systemPrompt, /^BASE SYSTEM/);
 });
+
 
 test('before_agent_start event handler does not auto-start curator when grc is disabled', async () => {
   let startCalls = 0;

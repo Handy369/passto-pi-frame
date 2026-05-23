@@ -27,12 +27,18 @@
 ### 🔄 GRC 认知循环（已启用）
 当前版本已将 GRC（Generator-Reflector-Curator）集成到主扩展中；其中 `skill-explore / runtime-proof` 文档口径现已明确收口为：**v1.1 收口完成，v1.2 最小闭环已落地，扩展项待继续**。
 
-> 当前架构说明：`docs/design_v1.2.md`（GRC 主链）与 `docs/skill_intelligence_v1.1.md`（skill-explore / runtime-proof）
+#### 最高设计约束：LLM-primary Context Runtime
+
+PasstoContext 的底层模型不是脚本状态机驱动 Agent，而是 **LLM-primary context runtime**：上下文由用户输入、passto-context 框架拼接、历史修剪 / 摘要 / 记忆恢复、当前目标 / 状态 / proof / 参数注入共同组成；这些内容为 LLM 提供“运行函数 / 方法论 + 信息参数”。LLM 在运行时基于上下文推理，并按需使用本地 runtime 工具、skill、文档、代码与 proof 热加载更多信息。最终输出应同时包含用户可感知的关键 runtime proof、新的信息参数，以及在需要时可复用的运行函数 / 方法论片段。
+
+因此，脚本、skill、schema、projection API 都是辅助设施，用于提高确定性、执行效率与运行可靠性；它们应帮助 LLM 获得稳定 `userGoalId` / `xNodeModelId` / `xNodeId`、目标路径、proof、artifacts、历史摘要与方法论函数，但不能替代 LLM 做语义目标裁决，也不能在状态缺失时静默创建新的 root goal。
+
+> 当前架构说明：`docs/V2.0/architecture-v2.0.md`、`docs/V2.0/README.md` 与 `docs/V2.0/implementation-plan.md`。
 >
-> 版本收口说明：`docs/skill_intelligence_v1.1_closure_note.md`
+> 当前 V2.0 状态：Mainline E1–E7、Improve-certainty P0–P7 与 Structural Continuity P0–P5 均已收口；旧 V1.2 / skill-intelligence 文档仅作为历史与兼容背景。
 
 - 主调度已切到 **agent-round / post-round**：`agent_end` 后后台启动 Reflector；Curator 在 `before_agent_start` 处理上一轮
-- `before_agent_start` 会注入：基础 GRC prompt、`GoalState`、去重后的 `SummaryCache`、Reflector 建议、相关 principles（分为人工宪法原则层与普通历史经验层）
+- `before_agent_start` 会注入：基础 GRC prompt、当前 userGoal / x-node-model、Context / Method / Proof packets、runtime proof / signals、去重后的 `SummaryCache`、Reflector 建议、相关 principles（分为人工宪法原则层与普通历史经验层）
 - `agent_start` 会写入 `passto-round-boundary`；`session_start` 会从 `grc-state`、`grc-curator-artifact`、`grc-reflector-artifact` 恢复运行态与 GRC 轻事实态（含显式校验与 replay）
 - `references/generator-contract.md` 现为静态单一维护源：`buildGeneratorCharterPrompt()` 从中投影 Generator Charter；`session_start` 会自动把 Constitution 投影同步到 `~/.pi/agent/APPEND_SYSTEM.md`
 - 自动同步带有安全边界：若 `generator-contract.md` 缺失，则跳过同步，而不会使用 fallback 覆写全局 `APPEND_SYSTEM.md`
@@ -40,7 +46,7 @@
 - 支持顶层 `runtimeMode = on | off` 运行态开关，可通过 `/ptc on|off` 切换
 - 长运行单次任务中，当当前 run 内的 `turn-round` 达到 `midRunTurnThreshold` 时，会触发一次 mid-run Reflector，并持久化 `grc-mid-run-debug`
 - Reflector / Curator 通过后台 `complete()` 异步运行，不阻塞主对话
-- **Reflector** 负责产出顾问意见与 `principleOps`；**Curator** 负责产出 `summaryEntry + GoalStateDocument + signal`
+- **Reflector** 负责产出顾问意见与 `principleOps`；**Curator** 负责产出 `summaryEntry + GoalStateDocument + signal`，并通过 V2 `reconciliationOps` 后验复核 userGoal / xNodeModel；旧 `draftDispositions` 仅作 legacy artifact 兼容
 - principles 现已分两层：`origin=manual && promoted=true` 的人工宪法原则，以及其余历史经验原则；前者在注入时优先于普通经验层，且不参与自动衰减/删除；后者继续按 `hintCount + activeScore + conflictGroupId` 治理，持久化到 `~/.passtocontext/memory/principles/principles-registry.json`
 - `context` hook 当前优先走 `GoalState + SummaryCache + 最近 N 个 agent-round 原始消息`，不再注入 legacy `lastSummary` fallback
 - `SummaryCache` 注入会自动排除最近已保留的 raw rounds，避免与 recent messages 重复；缓存溢出时会记录 eviction 日志
@@ -52,7 +58,7 @@
 - 仓库已提供可重复执行的 P4 proof 脚本入口：`npm run proof:skill-explore-p4 -- --session <session.jsonl> --root-dir <artifact-root> --output-doc <output.md> --skills-maker-skill <SKILL.md> --handoff-reference <skill-explore-handoff.md>`；对应回归测试已接入 `npm run test:status`
 - 另提供最小“主动扫描 ready bundle”脚本入口：`npm run proof:skill-explore-read-ready -- --root-dir <artifact-root> [--target-skill <skillKey|skillName|skillPath>] [--format json|markdown]`；选择策略现为 `target skill > newer > richer signals`：默认先按时间取最新项；若显式提供 target skill，则先限缩到匹配 skill 的候选，再按 newer、最后按 richer signals 决定；未命中时显式回退到全量候选中的最新 bundle。脚本输出现已显式包含 `selection.orderedBy / selection.signalRichness / selectionSummary.orderedByText`，并支持 markdown 模式直接产出可审阅摘要
 - 另提供端到端“ready → bundle → receipt” proof 脚本入口：`npm run proof:skill-explore-ready-receipt -- --root-dir <artifact-root> --output-doc <output.md> --skills-maker-skill <SKILL.md> --handoff-reference <skill-explore-handoff.md> [--target-skill <skillKey|skillName|skillPath>]`；它会按 `target skill > newer > richer signals` 消费 ready bundle、产出审计文档并写回 reviewed receipt；若未命中指定 skill，则回退到最新 ready bundle。产出的 proof 文档现已显式记录 `orderedBy` 与 `signalRichness` 细节
-- widget 当前真实代码已对齐为紧凑格式：`Run:11 7.5k | 记:28+4 | 思:✓ | 理:✓`，其中 `记:<principlesExtracted>+<skillReadCount>` 的左侧语义保持为“提取到的原则数”
+- widget 当前真实代码已对齐为紧凑格式：`实施:目标摘要 | Run:11 7.5k | 思:✓ | 理:✓ | 记:28+4`，优先展示当前 userGoal / xNode phase，再展示 Run/context、Reflector/Curator 与 memory/skill proof 指标；`记:<principlesExtracted>+<skillReadCount>` 的左侧语义保持为“提取到的原则数”
 - 若开启调试，日志目标应为 `~/.passtocontext/log/`，而不是把 debug/logger 文字直接显示在 TUI 中
 
 ### 📊 上下文追踪
@@ -143,6 +149,8 @@ PasstoContext 当前公开命令面包括基础运行态命令、principles revi
 - Memory / Tracking / Widget / GRC 开关
 - 当前 session 统计
 - round-centric 的 Reflector / Curator / SummaryCache / GoalState 核心观测
+- 当前 object focus：userGoal assertion、executionState、reviewState、relationState、xNode phase / atomicity / status
+- Latest Policy Projection、Runtime Proof、Completion Closure
 
 ### `/ptc on` — 开启运行时功能
 
@@ -515,7 +523,7 @@ before_agent_start
 - `grc-reflector-artifact` 已落地：Reflector 完成后增量持久化，`session_start` 可 replay 恢复 `lastAdvice / lastDiagnosis / processedUpToAgentRound / lastReflectedAgentRound`
 - artifact 恢复已具备显式校验与观测：会记录 rejected 数、恢复后的 `summaryCacheRounds`、`goalStateRound`、`lastDiagnosis` 与 `lastReflectedRound`
 - principles 会真实落盘到 `~/.passtocontext/memory/principles/principles-registry.json`；`manual + promoted` 条目作为人工宪法原则直接手改该 JSON 维护，其余 Reflector 条目继续走 `principleOps + registry`
-- `/ptc status` 已收敛为总状态视图：`Runtime`、`Memory / Tracking / Widget / GRC`、`Current agent-round`、`Current turn-round`、`Reflector status`、`Curator status`、`SummaryCache entries`、`GoalState Snapshot`、`Last Signal`、`Latest Curator Artifact Round`
+- `/ptc status` 已收敛为总状态视图：`Runtime`、`Memory / Tracking / Widget / GRC`、`Current agent-round`、`Current turn-round`、`Reflector status`、`Curator status`、`SummaryCache entries`、`GoalState Snapshot`、`Last Signal`、`Latest Curator Artifact Round`，并额外暴露 `Latest Goal Transition` 与 `Latest Policy Projection`
 - Reflector 在“无实质建议”时会记录日志：`Reflector finished (no substantive advice)`
 - `runtimeMode=off` 会关闭 GRC prompt 注入、principles 注入、context 修剪和 curator-aware compaction
 - `session_before_compact` 已实现 curator-only 接管策略，日志可见：`Using curator summary for compaction`
@@ -523,7 +531,8 @@ before_agent_start
 - `skill-explore` 当前真实产物目录为 `~/.passtocontext/skill-explore/`，结构包括：`sessions/<sessionKey>/round-skill-usage-facts.json`、`sessions/<sessionKey>/skill-explore-summary.json` 与 `latest/latest-session.json`
 - `skill-explore` 已通过真实 session 验证 top-agent / subagent 双场景：顶层 `read .../SKILL.md` 与 nested `subagent` transcript 中的 `read .../SKILL.md` 都能被 `agent_end` 后正确抽取并落盘
 - logger 目标目录已切换为 `~/.passtocontext/log/`
-- widget 当前代码已使用 `Run / context usage / 记 / 思 / 理` 结构，其中 `记:` 当前真实语义为 `记:<principlesExtracted>+<skillReadCount>`
+- widget 当前代码已使用 `Run / context usage / 记 / 思 / 理 / 策` 结构，其中 `记:` 当前真实语义为 `记:<principlesExtracted>+<skillReadCount>`，`策:` 为当前软消费中的 `nextStepType` 紧凑标签
+- widget 的 5 秒 transient notice 已可直接投影 Curator 目标迁移摘要，如：`子目标完成，回到父目标: ...`、`子目标完成，切到兄弟目标: ...`、`目标改写为: ...`
 
 ### 测试状态（2026-05-17）
 
@@ -548,13 +557,20 @@ before_agent_start
   - `principles review` 的 model / HTML / import / command wiring
   - round-state 更新与恢复
   - `skill-explore` 的 round fact 抽取、artifact 落盘、widget `记:` 格式化
+  - `draftGoalOp` 的解析、首轮空 `lastGoalState` bootstrap、runtime overlay、生效日志与 fresh real session proof 回归链
+  - E5 provisional overlay 正式对象层：`runtimeProvisionalOverlay`、effective object state、Curator disposition 收敛、restore/replay/status surface 闭环
 - `npm run test:tmux` 已聚合真实 Pi / tmux 集成回归：
   - `test:tui`
   - `test:midrun`
   - `test:reflector-replay`
+  - `test:curator-replay`
+- `npm run test:curator-replay` 已提供独立的真实 Pi / tmux 回归：当前定位为 curator replay / reload 稳定性烟测，主验证面是最近可接受 curator artifact、`grc-state` 恢复，以及 `/ptc status` 在 reload 前后的稳定一致性；严格的 round-2 object-rich policy / proof / transition 契约验证后续由独立 strict companion 补齐
 - `npm run test:regression` 作为新的主回归入口，串联：
   - `test:grc`
   - `test:tmux`
+- 已基于真实本地环境完成两次完整主回归验证：
+  - `2026-05-20`：`npm run test:regression` 最终通过，覆盖 `test:curator-replay`
+  - `2026-05-21`：在 Curator 输入升级为 object-first runtime context、`test:curator-replay` 验收口径同步到 object-first、以及 `test:midrun` 的 session jsonl 等待策略稳定化之后，`npm run test:regression` 再次全绿
 - 真实 TUI 回归脚本已覆盖：
   - `/ptc status`
   - `/ptc on`
@@ -574,12 +590,14 @@ before_agent_start
 
 - `npm run test:grc`
   - 快速 Node 回归链，不依赖 tmux
+  - 当前包含 `test:draft-goal`，覆盖 `draftGoalOp` 单测与 fresh real session proof
+  - 截至 `2026-05-20`，也已覆盖 E5 provisional overlay：state / injection / restore / replay / status / policy surface 闭环
 - `npm run test:tmux`
-  - 真实 Pi / tmux 集成回归聚合链：`test:tui + test:principles-review + test:midrun + test:reflector-replay`
+  - 真实 Pi / tmux 集成回归聚合链：`test:tui + test:principles-review + test:midrun + test:reflector-replay + test:curator-replay`
 - `npm run test:regression`
   - 当前主回归链：`test:grc + test:tmux`
 
-项目提供四类真实 Pi TUI 回归脚本：
+项目提供五类真实 Pi TUI 回归脚本：
 
 ### 基础 TUI 回归
 
@@ -652,6 +670,8 @@ npm run test:midrun
 
 相比只观察 pane 文本，`test:midrun` 以 session jsonl 中的持久化审计 entry 为主判据，更适合稳定回归。`grc-mid-run-debug` 是稳定主证据，`grc-mid-run-reflection-steer` 是否单独落盘取决于当前会话记录形态，因此不作为唯一硬性断言。
 
+补充说明：`test:midrun` 在真实宿主环境下曾偶发出现 session jsonl 创建较慢的时序抖动，可能表现为首次运行报 `session jsonl not found`、单独重跑即通过。当前脚本已升级为更长等待窗口（`wait_for_session_jsonl 120s`）并在超时时输出 pane / session 目录诊断信息，以更稳地吸收宿主 / tmux / Pi 启动时序波动；该问题已不再作为当前主回归阻塞点。判断后续阻塞时仍应优先结合 jsonl 审计证据，而不是只看 pane 文本。
+
 ### Reflector replay 回归
 
 当修改 `grc-reflector-artifact`、`session_start` restore/replay、`/ptc status`、`Latest Reflector Diagnosis` 或 round 对齐语义时，运行：
@@ -673,6 +693,38 @@ npm run test:reflector-replay
 - 最新 artifact 的 `agentRound` 与 `/ptc status` 的 `Last reflected round` 一致
 - 最新持久化 `grc-state.reflector.processedUpToAgentRound` 与 `lastReflectedAgentRound` 都对齐到最新 artifact round
 - replay 只恢复 latest 轻状态视图，不依赖人工目测 pane 文本，也不要求 reload 后额外新增一条 `grc-state` entry
+
+### Curator policy replay 回归
+
+当修改 `grc-curator-artifact`、`lastPolicyProjection`、`certaintyAssessment` 兼容投影、Curator 结构化 payload 解析、`/ptc status` 的 `Latest Policy Projection` / `Latest Goal Transition`、或 `session_start` / `/reload` 的 curator replay 语义时，运行：
+
+```bash
+npm run test:curator-replay
+```
+
+或直接运行：
+
+```bash
+./scripts/curator-policy-replay-regression.sh
+```
+
+该脚本基于 `tmux` 驱动真实 Pi 会话，当前以“最近可接受 curator artifact + reload 前后的 `/ptc status`”作为主证据，验证：
+
+- session jsonl 中至少存在一个可接受的 `grc-curator-artifact`（优先 round-2，否则允许回退到 round-1）
+- 最新持久化 `grc-state.curator.processedUpToAgentRound` 与 `lastCuratedAgentRound` 对齐到被接受的 artifact round
+- 若 artifact 中 `goalState / certaintyAssessment / signal / latestGoalTransition / latestRuntimeProof` 缺失，reload 后恢复结果仍与 artifact 语义一致
+- `/ptc status` 在 reload 前后都能稳定打开并保留 curator runtime surface
+- replay 后 curator 轻状态能恢复，不依赖人工目测 pane 文本
+
+注意：当前 `test:curator-replay` 已不再单独充当严格 round-2 object-rich 契约测试。若要强校验 `Latest Goal Transition` / `Latest Policy Projection` / `Latest Runtime Proof` 的完整 surface，请运行独立 strict companion：
+
+```bash
+npm run test:curator-replay:strict
+# 或
+./scripts/curator-policy-replay-strict-regression.sh
+```
+
+strict companion 只接受 round-2 object-rich curator artifact，并强校验 `/ptc status` 在 reload 前后的 transition / policy / runtime proof surface。设计说明见 `docs/V2.0/curator-replay-strict-test-plan.md`。
 
 ## 最小手工验证方案（tmux）
 

@@ -8,14 +8,17 @@ import {
   buildCuratorSubagentPrompt,
   buildReflectorSubagentPrompt,
 } from "./grc-prompts.ts";
+import { ensureGoalTreeDocument } from "./grc-goal-tree.ts";
+import { deriveUserGoalTreeFromGoalState } from "./grc-user-goal-tree.ts";
 import { parseCuratorOutput } from "./grc-curator-parser.ts";
 import { normalizeCuratorResultAgentRound } from "./grc-curator-normalizer.ts";
+import { deriveXNodeModelsFromGoalState, selectCurrentXNodeModel } from "./grc-x-node-model.ts";
 import { normalizeReflectorAssetCandidates } from "./grc-reflector-assets.ts";
 import { normalizeReflectorDiagnosis } from "./grc-reflector-diagnosis.ts";
 import type {
   CuratorResult,
   GRCConfig,
-  GoalStateDocument,
+  GoalStateAny,
   Logger,
   PrincipleDraft,
   PrincipleItem,
@@ -23,7 +26,7 @@ import type {
   ReflectorInput,
   ReflectorResult,
 } from "./types.ts";
-import { estimateTokens } from "./utils.ts";
+import { estimateTokens, truncate } from "./utils.ts";
 
 interface SerializeConversationOptions {
   maxTokens: number;
@@ -41,6 +44,7 @@ interface AuthInfo {
 type PiContentBlock = {
   type?: string;
   text?: string;
+  thinking?: string;
   name?: string;
   arguments?: string | Record<string, unknown>;
 };
@@ -141,6 +145,10 @@ export async function executeReflector(
   return parseReflectorOutput(raw);
 }
 
+export function normalizeGoalStateForCurator(currentGoalState: GoalStateAny | null): GoalStateAny | null {
+  return ensureGoalTreeDocument(currentGoalState);
+}
+
 export async function executeCurator(
   previousRoundConversation: string,
   currentUserMessage: string,
@@ -148,18 +156,37 @@ export async function executeCurator(
   config: GRCConfig,
   logger: Logger,
   signal?: AbortSignal,
-  currentGoalState: GoalStateDocument | null = null,
+  currentGoalState: GoalStateAny | null = null,
   currentAgentRound = 0,
 ): Promise<CuratorResult | null> {
+  const normalizedGoalState = normalizeGoalStateForCurator(currentGoalState);
+  const userGoalTree = deriveUserGoalTreeFromGoalState(normalizedGoalState);
+  const xNodeModels = deriveXNodeModelsFromGoalState(normalizedGoalState, userGoalTree);
+  const currentXNodeModel = selectCurrentXNodeModel(userGoalTree, xNodeModels);
   const prompt = buildCuratorSubagentPrompt(
     previousRoundConversation,
     currentUserMessage,
-    currentGoalState ? JSON.stringify(currentGoalState, null, 2) : "null",
+    {
+      goalStateJson: normalizedGoalState ? JSON.stringify(normalizedGoalState, null, 2) : "null",
+      userGoalTree,
+      xNodeModel: currentXNodeModel,
+      lastPolicyProjection: currentXNodeModel?.latestPolicyProjection ?? null,
+      latestRuntimeProof: currentXNodeModel?.latestRuntimeProof ?? null,
+      latestProofSignals: currentXNodeModel?.latestProofSignals ?? null,
+    },
     currentAgentRound,
   );
   const raw = await executeTextCompletion(prompt, ctx, config, logger, config.maxCuratorSummaryTokens, signal);
   if (!raw) return null;
   const parsed = parseCuratorOutput(raw);
+  if (!parsed) {
+    const excerpt = truncate(raw.replace(/\s+/g, ' ').trim(), 2000);
+    logger.warn(`Curator parse returned null (agentRound=${currentAgentRound}, rawExcerpt=${JSON.stringify(excerpt)})`);
+    return null;
+  }
+  if (raw.includes('```json') && !/```json\s*[\s\S]*?```\s*$/.test(raw.trim())) {
+    logger.warn(`Curator structured payload appears truncated (agentRound=${currentAgentRound}, rawExcerpt=${JSON.stringify(truncate(raw.slice(Math.max(0, raw.lastIndexOf('```json'))).replace(/\s+/g, ' ').trim(), 2000))})`);
+  }
   return normalizeCuratorResultAgentRound(parsed, currentAgentRound);
 }
 
@@ -252,13 +279,31 @@ async function executeTextCompletion(
     },
   );
 
-  return extractResponseText(response.content);
+  const text = extractResponseText(response.content);
+  if (!text) {
+    const blockTypes = Array.isArray(response.content)
+      ? response.content.map((block) => (block && typeof block === "object" && "type" in block ? String((block as { type?: unknown }).type ?? "unknown") : "unknown"))
+      : [];
+    logger.debug(`GRC subagent returned empty text payload (provider=${model.provider}, model=${model.id}, blocks=${JSON.stringify(blockTypes)})`);
+  }
+
+  return text;
 }
 
-function extractResponseText(content: Array<{ type: string; text?: string }>): string {
-  return content
+function extractResponseText(content: Array<{ type: string; text?: string; thinking?: string }>): string {
+  const textBlocks = content
     .filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof block.text === "string")
-    .map((block) => block.text)
+    .map((block) => block.text.trim())
+    .filter(Boolean);
+
+  if (textBlocks.length > 0) {
+    return textBlocks.join("\n").trim();
+  }
+
+  return content
+    .filter((block): block is { type: "thinking"; thinking: string } => block.type === "thinking" && typeof block.thinking === "string")
+    .map((block) => block.thinking.trim())
+    .filter(Boolean)
     .join("\n")
     .trim();
 }
@@ -284,8 +329,12 @@ function extractAssistantText(content: unknown): string {
   for (const block of content) {
     if (!block || typeof block !== "object") continue;
     const b = block as PiContentBlock;
-    if ((b.type === "text" || b.type === "thinking") && typeof b.text === "string") {
+    if (b.type === "text" && typeof b.text === "string") {
       parts.push(b.text);
+      continue;
+    }
+    if (b.type === "thinking" && typeof b.thinking === "string") {
+      parts.push(b.thinking);
     }
   }
   return parts.join("\n");

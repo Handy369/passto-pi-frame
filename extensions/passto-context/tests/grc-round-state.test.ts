@@ -37,13 +37,30 @@ test('updateReflectorStatus tracks processed, diagnosis, and last reflected agen
 
 test('updateCuratorStatus tracks processed and last curated agent rounds', () => {
   const initial = createInitialGRCState();
-  const next = updateCuratorStatus(initial, 'done', 'curator summary', 14, 0, null, null, undefined, null, 6, 6);
+  const next = updateCuratorStatus(
+    initial,
+    'done',
+    'curator summary',
+    14,
+    0,
+    null,
+    null,
+    undefined,
+    null,
+    null,
+    null,
+    6,
+    6,
+    { label: '目标改变为: 推进 P4', completedAssertion: null, currentAssertion: '推进 P4' },
+  );
 
   assert.equal(next.curator.status, 'done');
   assert.equal(next.curator.lastSummary, 'curator summary');
   assert.equal(next.curator.processedUpToTurn, 14);
   assert.equal(next.curator.processedUpToAgentRound, 6);
   assert.equal(next.curator.lastCuratedAgentRound, 6);
+  assert.equal(next.curator.latestGoalTransition?.label, '目标改变为: 推进 P4');
+  assert.equal(next.curator.lastPolicyProjection, null);
 });
 
 test('restoreGRCState preserves new round-based fields while normalizing running statuses', () => {
@@ -86,6 +103,7 @@ test('restoreGRCState preserves new round-based fields while normalizing running
   });
   assert.equal(restored.curator.processedUpToAgentRound, 8);
   assert.equal(restored.curator.lastCuratedAgentRound, 8);
+  assert.equal(restored.curator.lastPolicyProjection, null);
 });
 
 test('restoreGRCState maps legacy manualMode forced-off to runtimeMode off when runtimeMode is absent', () => {

@@ -64,6 +64,23 @@ find_session_jsonl() {
   find "$SESSION_DIR" -name '*.jsonl' | head -n 1
 }
 
+wait_for_session_jsonl() {
+  local attempts="${1:-60}"
+  local delay="${2:-1}"
+
+  for _ in $(seq 1 "$attempts"); do
+    local file
+    file="$(find_session_jsonl || true)"
+    if [[ -n "$file" ]]; then
+      printf '%s\n' "$file"
+      return 0
+    fi
+    sleep "$delay"
+  done
+
+  return 1
+}
+
 assert_jsonl_has() {
   local file="$1"
   local pattern="$2"
@@ -102,15 +119,15 @@ cat > "$CONFIG_PATH" <<'JSON'
   "grc": {
     "enabled": true,
     "midRunTurnThreshold": 2,
-    "subagentModel": "gemini-3-flash",
-    "subagentModelProvider": "opencode"
+    "subagentModel": "deepseek-v4-flash",
+    "subagentModelProvider": "deepseek"
   }
 }
 JSON
 
 printf '[info] Starting Pi mid-run regression session\n'
 tmux -L "$SOCK_NAME" new-session -d -s "$SESSION_NAME" -x 140 -y 42 \
-  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider ds4 --model deepseek-v4-flash --thinking low --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
+  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider deepseek --model deepseek-v4-flash --thinking low --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
 
 wait_for_pattern startup "PasstoContext ready|Loaded [0-9]+ principles" 60 1
 capture startup
@@ -136,17 +153,13 @@ EOF
 printf '[info] Test 2: trigger mid-run stuck reflector\n'
 send_cmd "$PROMPT"
 
-SESSION_JSONL=""
-for _ in $(seq 1 20); do
-  SESSION_JSONL="$(find_session_jsonl || true)"
-  if [[ -n "$SESSION_JSONL" ]]; then
-    break
-  fi
-  sleep 1
-done
+SESSION_JSONL="$(wait_for_session_jsonl 120 1 || true)"
 
 if [[ -z "$SESSION_JSONL" ]]; then
   echo "[FAIL] session jsonl not found" >&2
+  capture session-jsonl-timeout
+  sed -n '1,260p' "$LOG_DIR/session-jsonl-timeout.log" >&2 || true
+  find "$SESSION_DIR" -maxdepth 3 -print >&2 || true
   exit 1
 fi
 

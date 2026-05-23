@@ -45,10 +45,13 @@ const DEFAULT_GRC: GRCConfig = {
   maxContextPercent: 8,
   summaryCacheSize: 8,
   maxGoalStateActive: 8,
+  maxGoalTreeDepth: 5,
+  maxGoalTreeNodes: 20,
+  draftGoalEnabled: false,
   subagentModel: "gemini-3-flash",
   subagentModelProvider: "opencode",
   maxReflectorTokens: 1500,
-  maxCuratorSummaryTokens: 3000,
+  maxCuratorSummaryTokens: 5000,
   principlesDir: "~/.passtocontext/memory/principles",
   maxPrinciplesInjection: 5,
   maxPrinciples: 100,
@@ -213,6 +216,12 @@ export function validateConfig(config: PasstoContextConfig): string[] {
   }
   if (config.grc.maxGoalStateActive < 1) {
     errors.push("grc.maxGoalStateActive must be >= 1");
+  }
+  if (config.grc.maxGoalTreeDepth < 1) {
+    errors.push("grc.maxGoalTreeDepth must be >= 1");
+  }
+  if (config.grc.maxGoalTreeNodes < 1) {
+    errors.push("grc.maxGoalTreeNodes must be >= 1");
   }
   if (config.grc.maxReflectorTokens < 100) {
     errors.push("grc.maxReflectorTokens must be >= 100");

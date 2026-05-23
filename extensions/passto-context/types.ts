@@ -47,6 +47,9 @@ export interface GRCConfig {
   maxContextPercent: number;
   summaryCacheSize: number;
   maxGoalStateActive: number;
+  maxGoalTreeDepth: number;
+  maxGoalTreeNodes: number;
+  draftGoalEnabled: boolean;
   subagentModel: string;
   subagentModelProvider: string;
   maxReflectorTokens: number;
@@ -114,6 +117,78 @@ export type GRCMode = "normal" | "grc";
 export type RuntimeMode = "on" | "off";
 export type SubagentStatus = "idle" | "running" | "done" | "failed";
 
+export interface GoalTransitionSummary {
+  label: string;
+  completedAssertion: string | null;
+  currentAssertion: string | null;
+}
+
+export interface RuntimeDraftGoalState {
+  baseGoalStateRound: number | null;
+  sourceAgentRound: number;
+  createdAt: string;
+  goalState: GoalTreeDocument;
+  source: "generator";
+}
+
+export interface RuntimeProvisionalUserGoalState {
+  baseUserGoalTreeRound: number | null;
+  sourceAgentRound: number;
+  createdAt: string;
+  userGoalTree: UserGoalTreeDocument;
+  source: "generator";
+}
+
+export interface RuntimeProvisionalXNodeState {
+  baseXNodeModelRound: number | null;
+  sourceAgentRound: number;
+  createdAt: string;
+  xNodeModel: XNodeModelDocument;
+  source: "generator";
+}
+
+export interface RuntimeProvisionalOverlay {
+  sourceAgentRound: number;
+  createdAt: string;
+  source: "generator";
+  userGoalState: RuntimeProvisionalUserGoalState | null;
+  xNodeState: RuntimeProvisionalXNodeState | null;
+}
+
+export interface DraftDispositionNodeEdit {
+  goalId: string;
+  action: "update" | "remove";
+  newAssertion?: string;
+  newParentId?: string | null;
+  newPhase?: GoalNodePhase;
+  newAtomicity?: GoalNodeAtomicity;
+  newOrder?: number;
+}
+
+export interface DraftDisposition {
+  goalId: string;
+  action: "confirm-draft" | "revise-draft" | "discard-draft";
+  revisedAssertion?: string;
+  revisedParentGoalId?: string | null;
+  subtreeDisposition?: "keep-subtree" | "reparent-subtree" | "merge-into-existing" | "discard-subtree" | "rewrite-subtree";
+  mergeTargetGoalId?: string;
+  nodeEdits?: DraftDispositionNodeEdit[];
+  newCurrentFocusGoalId?: string | null;
+  evidence: string;
+}
+
+export interface DraftGoalOp {
+  action: "create" | "refine-current-draft" | "no-op";
+  goal?: {
+    assertion: string;
+    kind?: "goal" | "subgoal" | "branch";
+    parentGoalId?: string | null;
+    atomicity?: GoalNodeAtomicity;
+    phase?: GoalNodePhase;
+  };
+  reason: string;
+}
+
 export interface GRCState {
   mode: GRCMode;
   runtimeMode: RuntimeMode;
@@ -134,8 +209,17 @@ export interface GRCState {
     status: SubagentStatus;
     lastSummary: string | null;
     lastSummaryEntry: SummaryEntry | null;
-    lastGoalState: GoalStateDocument | null;
+    lastGoalState: GoalStateAny | null;
+    lastUserGoalTree?: UserGoalTreeDocument | null;
+    lastXNodeModels?: XNodeModelDocument[];
+    runtimeDraftGoalState?: RuntimeDraftGoalState | null;
+    runtimeProvisionalOverlay?: RuntimeProvisionalOverlay | null;
     lastSignal: GoalStateSignal | null;
+    lastCertaintyAssessment: CertaintyAssessment | null;
+    lastPolicyProjection?: XNodePolicyProjection | null;
+    latestRuntimeProof?: RuntimeProofRecord | null;
+    latestProofSignals?: RuntimeProofSignal[] | null;
+    latestGoalTransition?: GoalTransitionSummary | null;
     summaryCache: SummaryEntry[];
     processedUpToTurn: number; // legacy compatibility
     processedUpToAgentRound: number;
@@ -152,10 +236,15 @@ export interface ReflectorGoalContext {
     id: string;
     assertion: string;
     status: "active" | "suspended" | "completed";
+    signal?: "explicit" | "inferred" | "draft";
+    atomicity?: GoalNodeAtomicity;
+    phase?: GoalNodePhase;
   }>;
   siblingActiveGoals: Array<{
     id: string;
     assertion: string;
+    signal?: "explicit" | "inferred" | "draft";
+    phase?: GoalNodePhase;
   }>;
   recentMigrations: Array<{
     fromGoalId: string | null;
@@ -197,7 +286,7 @@ export interface SlimPrincipleItem {
 
 export interface ReflectorInput {
   currentRoundConversation: string;
-  currentGoalState: GoalStateDocument | null;
+  currentGoalState: GoalStateAny | null;
   goalContext?: ReflectorGoalContext | null;
   summaryCacheExcerpt?: SummaryEntry[];
   recentCuratorArtifacts?: CuratorArtifactEntry[];
@@ -283,10 +372,288 @@ export interface SummaryEntry {
 }
 
 export interface GoalStateSignal {
-  type: "advance" | "correct" | "supplement" | "continue" | "clarify";
+  type: "advance" | "correct" | "supplement" | "continue" | "clarify" | "confirm-draft" | "revise-draft" | "discard-draft";
   confidence: number;
   evidence: string;
 }
+
+export type GoalNodePhase =
+  | "plan"
+  | "plan_insufficient"
+  | "execute"
+  | "testing"
+  | "pending_acceptance"
+  | "complete";
+
+export type GoalNodeAtomicity = "atomic" | "composite" | "undecided";
+
+export interface GoalNode {
+  id: string;
+  parentId: string | null;
+  assertion: string;
+  kind: "goal" | "subgoal" | "branch";
+  status: "active" | "suspended" | "completed";
+  signal: "explicit" | "inferred" | "draft";
+  atomicity: GoalNodeAtomicity;
+  phase: GoalNodePhase;
+  sinceRound: number;
+  lastTouchedRound: number;
+  lastConfirmedRound: number;
+  completedAtRound?: number;
+  priority: number;
+  order: number;
+}
+
+export interface GoalTreeMigration {
+  id: string;
+  fromGoalId: string | null;
+  toGoalId: string;
+  type: "create" | "refine" | "split" | "pivot" | "resume" | "complete";
+  atRound: number;
+  triggerSignal: GoalStateSignal["type"];
+  reason: string;
+}
+
+export interface GoalTreeDocument {
+  version: 2;
+  agentRound: number;
+  updatedAt: string;
+  rootGoalIds: string[];
+  currentFocusGoalId: string | null;
+  nodes: GoalNode[];
+  migrations: GoalTreeMigration[];
+  lastSignal?: GoalStateSignal;
+  prunedCount: number;
+}
+
+export interface UserGoalTreeDocument {
+  version: 1;
+  agentRound: number;
+  updatedAt: string;
+  currentFocusUserGoalId: string | null;
+  rootUserGoalIds: string[];
+  userGoals: UserGoalNode[];
+  completion?: UserGoalTreeCompletion | null;
+}
+
+export type UserGoalExecutionState =
+  | "identified"
+  | "planning"
+  | "executing"
+  | "testing"
+  | "pending_acceptance"
+  | "completed";
+
+export type UserGoalReviewState =
+  | "generator_projected"
+  | "curator_reviewed"
+  | "user_confirmed";
+
+export type UserGoalRelationState =
+  | "active"
+  | "revised"
+  | "superseded"
+  | "merged"
+  | "split"
+  | "migrated"
+  | "discarded"
+  | "reopened";
+
+export interface UserGoalSource {
+  createdBy: "generator" | "curator" | "restore" | "migration";
+  lastUpdatedBy: "generator" | "curator" | "user" | "system" | "restore" | "migration";
+  sourceUserTurnId?: string;
+  sourceAgentRound?: number;
+  evidenceEntryIds?: string[];
+}
+
+export interface UserGoalNode {
+  id: string;
+  parentId: string | null;
+  assertion: string;
+  status: "identified" | "planning" | "executing" | "completed";
+  executionState?: UserGoalExecutionState;
+  reviewState?: UserGoalReviewState;
+  relationState?: UserGoalRelationState;
+  source?: UserGoalSource;
+  xNodeModelId: string | null;
+  sinceRound: number;
+  lastTouchedRound: number;
+  completedAtRound?: number;
+}
+
+export interface XNodeModelDocument {
+  version: 1;
+  id: string;
+  userGoalId: string;
+  agentRound: number;
+  updatedAt: string;
+  currentFocusXNodeId: string | null;
+  rootXNodeIds: string[];
+  nodes: XNode[];
+  latestPolicyProjection?: XNodePolicyProjection | null;
+  latestRuntimeProof?: RuntimeProofRecord | null;
+  latestProofSignals?: RuntimeProofSignal[];
+  commitLog?: XNodeCommit[];
+  completion?: XNodeModelCompletion | null;
+}
+
+export interface UserGoalTreeCompletion {
+  treeComplete: boolean;
+  completedUserGoalIds: string[];
+  openUserGoalIds: string[];
+  nextFocusUserGoalId: string | null;
+}
+
+export interface XNodeModelCompletion {
+  localComplete: boolean;
+  modelComplete: boolean;
+  completedNodeCount: number;
+  openNodeCount: number;
+  nextOpenXNodeId: string | null;
+}
+
+export interface XNodePolicyProjection {
+  xNodeId: string;
+  derivedAtRound: number;
+  dimensions: {
+    why: "open" | "partial" | "closed";
+    what: "open" | "partial" | "closed";
+    flow: "open" | "partial" | "closed";
+    structure: "open" | "partial" | "closed";
+    runtimeProof: "open" | "partial" | "closed";
+  };
+  keyGaps: string[];
+  nextStepType: "plan_repair" | "generate_children" | "execute_atomic_work" | "run_tests" | "seek_acceptance" | "upward_regression";
+  confidence: number;
+  guidance: string[];
+}
+
+export interface XNode {
+  id: string;
+  parentId: string | null;
+  assertion: string;
+  status: "active" | "suspended" | "completed";
+  atomicity: GoalNodeAtomicity;
+  phase: GoalNodePhase;
+  why: XNodeFacet;
+  what: XNodeFacet;
+  flow: XNodeFacet;
+  structure: XNodeFacet;
+  runtimeProof: XNodeFacet;
+  sinceRound: number;
+  lastTouchedRound: number;
+  completedAtRound?: number;
+  priority: number;
+  order: number;
+}
+
+export interface XNodeFacet {
+  summary: string;
+  confidence: "open" | "partial" | "closed";
+  evidence?: string[];
+  method?: string[];
+}
+
+export interface RuntimeProofRecord {
+  targetXNodeId: string;
+  atRound: number;
+  resultSummary: string;
+  proofMode: "tests" | "runtime" | "human-check" | "self-proof" | "mixed";
+  proofStatus: "passed" | "failed" | "partial" | "missing";
+  evidence: string[];
+  verificationMethod: string[];
+}
+
+export interface ArtifactRef {
+  id: string;
+  path?: string;
+  kind?: string;
+  summary?: string;
+}
+
+export interface XNodeCommit {
+  commitId: string;
+  userGoalId: string;
+  xNodeModelId: string;
+  xNodeId: string;
+  resultStatus: "completed" | "partial" | "blocked";
+  outputRefs: ArtifactRef[];
+  proofRefs: RuntimeProofRecord[];
+  statePatch: {
+    phase?: XNode["phase"];
+    status?: XNode["status"];
+    nextFocusXNodeId?: string | null;
+    updatedFacets?: Partial<Record<"why" | "what" | "flow" | "structure" | "runtimeProof", XNodeFacet>>;
+  };
+  evidence: string[];
+}
+
+export interface RuntimeContextHintSurface {
+  dynamicStateSource: "object-sidecars" | "goal-state-fallback" | "unresolved_context_state";
+  focusUserGoalIdCandidate: string | null;
+  focusXNodeModelIdCandidate: string | null;
+  focusXNodeIdCandidate: string | null;
+  phaseCandidate: XNode["phase"] | "unresolved_context_state" | null;
+  phaseEvidence: string[];
+  policyHint: XNodePolicyProjection["nextStepType"] | null;
+  proofStatusHint: RuntimeProofRecord["proofStatus"] | null;
+  warnings: string[];
+}
+
+export interface ContextParameterPacket {
+  currentFocusUserGoalId: string | null;
+  currentFocusXNodeModelId: string | null;
+  currentFocusXNodeId: string | null;
+  runtimeContextHintSurface: RuntimeContextHintSurface;
+  focusUserGoalPath: UserGoalNode[];
+  focusXNodePath: XNode[];
+  sleepingUserGoals: UserGoalNode[];
+  recentArtifacts: ArtifactRef[];
+  latestCommits: XNodeCommit[];
+  latestRuntimeProof: RuntimeProofRecord | null;
+}
+
+export interface MethodPacket {
+  methodRef: string;
+  purpose: string;
+  advisoryOnly: boolean;
+  whenToUse: string[];
+  inputContract: string[];
+  outputContract: string[];
+}
+
+export interface ProofPacket {
+  targetUserGoalId: string;
+  targetXNodeModelId: string;
+  targetXNodeId: string;
+  proofStatus: RuntimeProofRecord["proofStatus"];
+  evidence: string[];
+  verificationMethod: string[];
+  userVisibleSummary: string;
+}
+
+export interface ContextMethodProofPackets {
+  contextParameterPacket: ContextParameterPacket;
+  methodPackets: MethodPacket[];
+  proofPacket: ProofPacket | null;
+}
+
+export interface RuntimeProofSignal {
+  id: string;
+  targetXNodeId: string;
+  atRound: number;
+  type:
+    | "runtime-proof-failed"
+    | "runtime-proof-partial"
+    | "runtime-proof-missing"
+    | "runtime-proof-conflicted";
+  message: string;
+  suggestedNextStepType?: XNodePolicyProjection["nextStepType"];
+  evidence?: string[];
+}
+
+export type GoalStateAny = GoalStateDocument | GoalTreeDocument;
 
 export interface GoalStateDocument {
   version: 1;
@@ -314,12 +681,43 @@ export interface GoalStateDocument {
   prunedCount: number;
 }
 
+export interface CertaintyAssessment {
+  dimensions: {
+    why: "closed" | "open" | "partial";
+    what: "closed" | "open" | "partial";
+    flow: "closed" | "open" | "partial";
+    structure: "closed" | "open" | "partial";
+    runtimeProof: "closed" | "open" | "partial";
+  };
+  keyGaps: string[];
+  nextStepType: "plan_repair" | "generate_children" | "execute_atomic_work" | "run_tests" | "seek_acceptance" | "upward_regression";
+  confidence: number;
+}
+
+export interface CuratorAuditAdvice {
+  parentAlignmentWarning?: string | null;
+  possibleGoalMisclassification?: string | null;
+  suggestedRecovery?: string | null;
+  advisoryOnly: true;
+}
+
 export interface CuratorResult {
   summary: string;
   summaryEntry: SummaryEntry | null;
-  goalState: GoalStateDocument | null;
+  goalState: GoalStateAny | null;
+  userGoalTree?: UserGoalTreeDocument | null;
+  xNodeModels?: XNodeModelDocument[] | null;
+  reconciliationOps?: import("./grc-curator-reconciliation.ts").CuratorReconciliationOp[] | null;
+  reconciliationWarnings?: string[];
+  auditAdvice?: CuratorAuditAdvice | null;
+  lastPolicyProjection?: XNodePolicyProjection | null;
   signal: GoalStateSignal | null;
   closureEvidence: string[];
+  certaintyAssessment?: CertaintyAssessment | null;
+  latestRuntimeProof?: RuntimeProofRecord | null;
+  latestProofSignals?: RuntimeProofSignal[] | null;
+  draftGoalOp?: DraftGoalOp | null;
+  draftDispositions?: DraftDisposition[] | null;
   sections: {
     goal: string;
     completed: string[];
@@ -338,8 +736,21 @@ export interface CuratorArtifactEntry {
   processedUpToUserTurn: number;
   summary: string | null;
   summaryEntry: SummaryEntry | null;
-  goalState: GoalStateDocument | null;
+  goalState: GoalStateAny | null;
+  userGoalTree?: UserGoalTreeDocument | null;
+  xNodeModels?: XNodeModelDocument[] | null;
+  reconciliationOps?: import("./grc-curator-reconciliation.ts").CuratorReconciliationOp[] | null;
+  reconciliationWarnings?: string[];
+  auditAdvice?: CuratorAuditAdvice | null;
   signal: GoalStateSignal | null;
+  certaintyAssessment?: CertaintyAssessment | null;
+  lastPolicyProjection?: XNodePolicyProjection | null;
+  latestRuntimeProof?: RuntimeProofRecord | null;
+  latestProofSignals?: RuntimeProofSignal[] | null;
+  draftGoalOp?: DraftGoalOp | null;
+  draftDispositions?: DraftDisposition[] | null;
+  runtimeProvisionalOverlay?: RuntimeProvisionalOverlay | null;
+  latestGoalTransition?: GoalTransitionSummary | null;
 }
 
 export interface ReflectorArtifactEntry {

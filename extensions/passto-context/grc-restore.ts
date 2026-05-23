@@ -1,8 +1,9 @@
 import type { CuratorArtifactEntry, GRCState, ReflectorArtifactEntry } from './types.ts';
+import { parseDraftGoalOp } from './grc-draft-goal.ts';
 import { normalizeCuratorArtifactAgentRound } from './grc-curator-normalizer.ts';
 import { normalizeReflectorAssetCandidates } from './grc-reflector-assets.ts';
 import { normalizeReflectorDiagnosis } from './grc-reflector-diagnosis.ts';
-import { pushSummaryCacheEntry, updateCuratorStatus, updateReflectorStatus } from './grc-state.ts';
+import { pushSummaryCacheEntry, setCuratorObjectSidecars, setRuntimeProvisionalOverlay, updateCuratorStatus, updateReflectorStatus } from './grc-state.ts';
 
 export interface RestoreReplayResult {
   state: GRCState;
@@ -27,7 +28,20 @@ export function parseCuratorArtifactEntry(data: unknown): CuratorArtifactEntry |
     summary: typeof value.summary === 'string' || value.summary === null ? (value.summary ?? null) : null,
     summaryEntry: value.summaryEntry && typeof value.summaryEntry === 'object' ? value.summaryEntry : null,
     goalState: value.goalState && typeof value.goalState === 'object' ? value.goalState : null,
+    userGoalTree: value.userGoalTree && typeof value.userGoalTree === 'object' ? value.userGoalTree as CuratorArtifactEntry['userGoalTree'] : null,
+    xNodeModels: Array.isArray(value.xNodeModels) ? value.xNodeModels as CuratorArtifactEntry['xNodeModels'] : null,
+    reconciliationOps: Array.isArray(value.reconciliationOps) ? value.reconciliationOps as CuratorArtifactEntry['reconciliationOps'] : null,
+    reconciliationWarnings: Array.isArray(value.reconciliationWarnings) ? value.reconciliationWarnings.filter((item): item is string => typeof item === 'string') : [],
+    auditAdvice: value.auditAdvice && typeof value.auditAdvice === 'object' ? value.auditAdvice as CuratorArtifactEntry['auditAdvice'] : null,
     signal: value.signal && typeof value.signal === 'object' ? value.signal : null,
+    certaintyAssessment: value.certaintyAssessment && typeof value.certaintyAssessment === 'object' ? value.certaintyAssessment as CuratorArtifactEntry['certaintyAssessment'] : null,
+    lastPolicyProjection: value.lastPolicyProjection && typeof value.lastPolicyProjection === 'object' ? value.lastPolicyProjection as CuratorArtifactEntry['lastPolicyProjection'] : null,
+    latestRuntimeProof: value.latestRuntimeProof && typeof value.latestRuntimeProof === 'object' ? value.latestRuntimeProof as CuratorArtifactEntry['latestRuntimeProof'] : null,
+    latestProofSignals: Array.isArray(value.latestProofSignals) ? value.latestProofSignals as CuratorArtifactEntry['latestProofSignals'] : null,
+    draftGoalOp: parseDraftGoalOp(value.draftGoalOp),
+    draftDispositions: Array.isArray(value.draftDispositions) ? value.draftDispositions as CuratorArtifactEntry['draftDispositions'] : null,
+    runtimeProvisionalOverlay: value.runtimeProvisionalOverlay && typeof value.runtimeProvisionalOverlay === 'object' ? value.runtimeProvisionalOverlay as CuratorArtifactEntry['runtimeProvisionalOverlay'] : null,
+    latestGoalTransition: value.latestGoalTransition && typeof value.latestGoalTransition === 'object' ? value.latestGoalTransition as CuratorArtifactEntry['latestGoalTransition'] : null,
   };
 }
 
@@ -48,6 +62,10 @@ export function parseReflectorArtifactEntry(data: unknown): ReflectorArtifactEnt
   };
 }
 
+function hasUsableObjectSidecars(artifact: CuratorArtifactEntry): boolean {
+  return Boolean(artifact.userGoalTree?.userGoals?.length && artifact.xNodeModels?.length);
+}
+
 export function replayCuratorArtifacts(state: GRCState, artifacts: CuratorArtifactEntry[], maxSize: number): GRCState {
   let nextState = updateCuratorStatus(
     state,
@@ -59,6 +77,8 @@ export function replayCuratorArtifacts(state: GRCState, artifacts: CuratorArtifa
     null,
     [],
     null,
+    null,
+    undefined,
   );
 
   for (const artifact of artifacts) {
@@ -73,7 +93,22 @@ export function replayCuratorArtifacts(state: GRCState, artifacts: CuratorArtifa
       normalizedArtifact.goalState,
       undefined,
       normalizedArtifact.signal,
+      normalizedArtifact.certaintyAssessment ?? null,
+      normalizedArtifact.agentRound,
+      undefined,
+      normalizedArtifact.agentRound,
+      normalizedArtifact.latestGoalTransition ?? null,
     );
+    if (hasUsableObjectSidecars(normalizedArtifact)) {
+      nextState = setCuratorObjectSidecars(nextState, {
+        userGoalTree: normalizedArtifact.userGoalTree ?? null,
+        xNodeModels: normalizedArtifact.xNodeModels ?? [],
+        lastPolicyProjection: normalizedArtifact.lastPolicyProjection ?? undefined,
+        latestRuntimeProof: normalizedArtifact.latestRuntimeProof ?? undefined,
+        latestProofSignals: normalizedArtifact.latestProofSignals ?? undefined,
+      });
+    }
+    nextState = setRuntimeProvisionalOverlay(nextState, normalizedArtifact.runtimeProvisionalOverlay ?? null);
     if (normalizedArtifact.summaryEntry) {
       nextState = pushSummaryCacheEntry(nextState, normalizedArtifact.summaryEntry, maxSize).state;
     }

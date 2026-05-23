@@ -144,6 +144,39 @@ test('executeSummarySearchTool clamps limit and returns empty result text when n
   assert.deepEqual(result.details.hits, []);
 });
 
+test('executeSummarySearchTool ignores draftGoalOp-only artifact when summaryEntry is absent', async () => {
+  const branch = [
+    {
+      type: 'custom',
+      customType: 'grc-curator-artifact',
+      data: {
+        customType: 'grc-curator-artifact',
+        agentRound: 7,
+        recordedAt: '2026-05-13T10:07:00.000Z',
+        processedUpToUserTurn: 14,
+        draftGoalOp: {
+          action: 'create',
+          goal: {
+            assertion: 'draft only artifact',
+            kind: 'goal',
+            parentGoalId: null,
+            atomicity: 'undecided',
+            phase: 'plan',
+          },
+          reason: 'new independent goal',
+        },
+      },
+    },
+  ];
+
+  const result = await executeSummarySearchTool({ query: 'draft only artifact', limit: 5 }, makeCtx(branch), {
+    lineageSummaryMaxDepth: 0,
+  });
+
+  assert.match(result.content[0]?.text ?? '', /No lineage summary hits found/);
+  assert.equal(result.details.totalWarehouseEntries, 0);
+});
+
 test('injectSessionSummarySearchGuidance appends guidance only when warehouse exists and enabled', async () => {
   const enabled = await injectSessionSummarySearchGuidance('BASE', true, makeCtx(), {
     lineageSummaryMaxDepth: 0,
@@ -165,6 +198,7 @@ test('injectSessionSummarySearchGuidance appends guidance only when warehouse ex
   assert.equal(empty.systemPrompt, 'BASE');
   assert.equal(empty.diagnostic, 'summary-search-guidance:0(warehouse=0)');
 });
+
 
 test('injectSessionSummarySearchGuidance uses current-session warehouse without lineage traversal', async () => {
   const ctx = makeCtx();

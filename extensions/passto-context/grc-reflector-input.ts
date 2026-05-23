@@ -86,5 +86,7 @@ function parseCuratorArtifactEntry(raw: unknown): CuratorArtifactEntry | null {
     summaryEntry: value.summaryEntry && typeof value.summaryEntry === 'object' ? value.summaryEntry : null,
     goalState: value.goalState && typeof value.goalState === 'object' ? value.goalState : null,
     signal: value.signal && typeof value.signal === 'object' ? value.signal : null,
+    certaintyAssessment: value.certaintyAssessment && typeof value.certaintyAssessment === 'object' ? value.certaintyAssessment as CuratorArtifactEntry['certaintyAssessment'] : null,
+    draftDispositions: Array.isArray(value.draftDispositions) ? value.draftDispositions as CuratorArtifactEntry['draftDispositions'] : null,
   };
 }

@@ -173,15 +173,15 @@ cat > "$CONFIG_PATH" <<JSON
     "enabled": true,
     "midRunTurnThreshold": 99,
     "principlesDir": "$PRINCIPLES_DIR",
-    "subagentModel": "gemini-3-flash",
-    "subagentModelProvider": "opencode"
+    "subagentModel": "deepseek-v4-flash",
+    "subagentModelProvider": "deepseek"
   }
 }
 JSON
 
 printf '[info] Starting Pi principles review regression session\n'
 tmux -L "$SOCK_NAME" new-session -d -s "$SESSION_NAME" -x 140 -y 42 \
-  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider ds4 --model deepseek-v4-flash --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
+  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider deepseek --model deepseek-v4-flash --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
 
 wait_for_prompt_ready
 capture startup

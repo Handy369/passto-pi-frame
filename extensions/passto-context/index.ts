@@ -20,23 +20,28 @@ import { ensureConfigExists, getConfigFilePath } from "./config.js";
 import { createCompactionHandler } from "./compaction.js";
 import { createMemoryManager } from "./memory.js";
 import { createContextTracker } from "./context-tracker.js";
-import { createLogger, estimateTokens, expandHome, formatCompactK, getSessionDisplayName } from "./utils.js";
+import { createLogger, estimateTokens, expandHome, formatCompactK, getSessionDisplayName, truncate } from "./utils.js";
 import {
   clearRunningSubagentStatuses,
   createInitialGRCState,
   finishAgentRound,
+  getEffectiveObjectState,
   incrementTurnRound,
   pushSummaryCacheEntry,
   restoreGRCState,
   serializeGRCState,
+  setCuratorObjectSidecars,
+  clearRuntimeProvisionalOverlay,
+  setRuntimeDraftGoalState,
   setRuntimeMode,
+  setRuntimeProvisionalOverlay,
   startAgentRound,
   updateCuratorStatus,
   updateReflectorStatus,
 } from "./grc-state.js";
 import { buildReflectionSteerPrompt, buildReflectorInjection } from "./grc-prompts.js";
 import { ensureAppendSystemPromptSync } from "./grc-generator-contract.ts";
-import { buildReflectorGoalContext } from "./grc-goal-context.js";
+import { buildReflectorGoalContext, buildReflectorGoalContextFromObjectSidecars } from "./grc-goal-context.js";
 import { executeCurator, executeReflector, serializeConversation } from "./grc-subagent.js";
 import { formatReflectorDiagnosisLabel } from "./grc-reflector-diagnosis.ts";
 import { detectExternalOrchestratorFromBranch } from "./orchestrator-guard.ts";
@@ -47,6 +52,8 @@ import { executePrinciplesCurator, PRINCIPLES_CURATOR_TRIGGER, PRINCIPLES_CURATO
 import { restoreCuratorStateFromBranchEntries } from "./grc-restore.ts";
 import { getCuratorGoalStateRejectionReasons, reconcileCuratorGoalState } from "./grc-curator-guard.ts";
 import { formatPTCStatus } from "./ptc-status.ts";
+import { getGoalStateOpenAssertions, getGoalStateOpenAssertionsFromObjectSidecars, summarizeGoalState, summarizeGoalStateFromObjectSidecars } from "./grc-goal-state-summary.ts";
+import { summarizeGoalTransition, summarizeGoalTransitionFromObjectSidecars } from "./grc-goal-transition.ts";
 import { getPTCUsageText, handlePTCPrinciplesReviewCommand } from "./ptc-principles-review-command.ts";
 import { handlePTCSkillsCommand } from "./ptc-skills-command.ts";
 import { normalizePTCSubcommand } from "./ptc-command-routing.ts";
@@ -55,7 +62,7 @@ import {
   getCurrentAgentRoundEntries,
   mergeRecentAgentRoundMessagesWithContext,
 } from "./grc-context-manager.js";
-import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, PasstoContextConfig, PrincipleItem, ReflectorArtifactEntry, SessionState, SummaryEntry } from "./types.js";
+import type { AgentRoundBoundaryEntry, CuratorArtifactEntry, GRCState, GoalNodePhase, PasstoContextConfig, PrincipleItem, ReflectorArtifactEntry, SessionState, SummaryEntry } from "./types.js";
 import {
   getCachedBranch,
   getCachedLatestUserMessageText,
@@ -70,7 +77,18 @@ import {
 import { hydrateSummaryEntrySessionContext } from "./summary-warehouse.js";
 import { executeSummarySearchTool, getSessionSummaryWarehouseEntries, getLineageSummaryWarehouseEntries } from "./runtime-summary-search.js";
 import { createBeforeAgentStartHandler } from "./before-agent-start-event.ts";
+import { applyDraftGoalOpToGoalTree, extractDraftGoalOpFromText } from "./grc-draft-goal.ts";
+import { applyDraftDispositionsToRuntimeProvisionalOverlay, buildRuntimeProvisionalOverlayFromDraftGoalOp } from "./grc-provisional-overlay.ts";
 import { formatSkillProofMetric, getSkillExploreRuntimeSnapshotFromBranch, runSkillExploreAgentEndBridge } from "./plugin/skill-explore/index.ts";
+import { deriveUserGoalTreeFromGoalState } from "./grc-user-goal-tree.ts";
+import { deriveXNodeModelsFromGoalState } from "./grc-x-node-model.ts";
+import { getRuntimeSurfacePolicySnapshot } from "./grc-policy-surface.ts";
+import { selectCurrentXNodeModel } from "./grc-x-node-model.ts";
+import { applyCompletionClosure } from "./grc-completion-closure.ts";
+import {
+  createApplyUserGoalProjectionToolParams,
+  executeApplyUserGoalProjectionTool,
+} from "./grc-user-goal-projection-tool.ts";
 
 // =============================================================================
 // Module State (module-level singleton for the extension lifetime)
@@ -233,6 +251,132 @@ function appendReflectorArtifactEntry(pi: ExtensionAPI, entry: ReflectorArtifact
   }
 }
 
+function getLatestAssistantLikeText(ctx: ExtensionContext, event?: { [key: string]: unknown } | null): string | null {
+  const directCandidates = [
+    event?.response,
+    event?.output,
+    event?.text,
+    event?.content,
+    event?.message,
+  ];
+  for (const candidate of directCandidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate;
+    }
+    if (Array.isArray(candidate)) {
+      const joined = candidate
+        .map((item) => {
+          if (typeof item === 'string') return item;
+          if (item && typeof item === 'object' && 'text' in item && typeof (item as { text?: unknown }).text === 'string') {
+            return (item as { text: string }).text;
+          }
+          return '';
+        })
+        .filter(Boolean)
+        .join('\n');
+      if (joined.trim()) return joined;
+    }
+    if (candidate && typeof candidate === 'object') {
+      const text = extractTextFromUnknown(candidate);
+      if (text) return text;
+    }
+  }
+
+  const branch = getCachedBranch(ctx);
+  for (let index = branch.length - 1; index >= 0; index -= 1) {
+    const entry = branch[index] as Record<string, unknown> | undefined;
+    if (!entry || typeof entry !== 'object') continue;
+
+    const role = typeof entry.role === 'string' ? entry.role : typeof entry.type === 'string' ? entry.type : '';
+    if (!['assistant', 'message', 'agent'].includes(role)) continue;
+
+    const text = typeof entry.content === 'string'
+      ? entry.content
+      : typeof entry.text === 'string'
+        ? entry.text
+        : Array.isArray(entry.content)
+          ? entry.content.filter((item): item is string => typeof item === 'string').join('\n')
+          : extractTextFromUnknown(entry.message ?? entry.content ?? entry);
+    if (text.trim()) return text;
+  }
+  return null;
+}
+
+function extractTextFromUnknown(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => extractTextFromUnknown(item)).filter(Boolean).join('\n');
+  }
+  if (!value || typeof value !== 'object') return '';
+
+  const record = value as Record<string, unknown>;
+  const directKeys = ['text', 'content', 'response', 'output', 'message'];
+  for (const key of directKeys) {
+    const nested = record[key];
+    const text = extractTextFromUnknown(nested);
+    if (text.trim()) return text;
+  }
+
+  if (Array.isArray(record.parts)) {
+    const text = record.parts.map((part) => extractTextFromUnknown(part)).filter(Boolean).join('\n');
+    if (text.trim()) return text;
+  }
+
+  return '';
+}
+
+function maybeApplyDraftGoalOpFromBranch(ctx: ExtensionContext, event?: { [key: string]: unknown } | null): void {
+  if (!config?.grc.draftGoalEnabled || !grcState) {
+    return;
+  }
+
+  const latestAssistantText = getLatestAssistantLikeText(ctx, event);
+  if (!latestAssistantText) return;
+
+  const draftGoalOp = extractDraftGoalOpFromText(latestAssistantText);
+  if (!draftGoalOp || draftGoalOp.action !== 'create') return;
+
+  const currentAgentRound = grcState.currentAgentRound || (grcState.totalAgentRounds + 1);
+  const baseGoalState = grcState.curator.runtimeDraftGoalState?.goalState
+    ?? (grcState.curator.lastGoalState?.version === 2 ? grcState.curator.lastGoalState : null)
+    ?? {
+      version: 2,
+      agentRound: Math.max(0, currentAgentRound - 1),
+      updatedAt: new Date().toISOString(),
+      rootGoalIds: [],
+      currentFocusGoalId: null,
+      nodes: [],
+      migrations: [],
+      prunedCount: 0,
+    };
+
+  const nextGoalState = applyDraftGoalOpToGoalTree(baseGoalState, draftGoalOp, currentAgentRound);
+  const hasDraftGoalStateBridge = nextGoalState !== baseGoalState;
+  if (hasDraftGoalStateBridge) {
+    grcState = setRuntimeDraftGoalState(grcState, {
+      baseGoalStateRound: grcState.curator.lastGoalState?.agentRound ?? null,
+      sourceAgentRound: currentAgentRound,
+      createdAt: new Date().toISOString(),
+      source: 'generator',
+      goalState: nextGoalState,
+    });
+  }
+
+  const nextProvisionalOverlay = buildRuntimeProvisionalOverlayFromDraftGoalOp({
+    draftGoalOp,
+    currentAgentRound,
+    confirmedGoalState: grcState.curator.lastGoalState ?? null,
+    confirmedUserGoalTree: grcState.curator.lastUserGoalTree ?? null,
+    confirmedXNodeModels: grcState.curator.lastXNodeModels ?? [],
+  });
+  if (nextProvisionalOverlay) {
+    grcState = setRuntimeProvisionalOverlay(grcState, nextProvisionalOverlay);
+  }
+
+  if (!hasDraftGoalStateBridge && !nextProvisionalOverlay) return;
+  logger?.debug(`Applied draftGoalOp runtime overlay (agentRound=${currentAgentRound}, focus=${nextGoalState.currentFocusGoalId ?? 'none'}, provisionalPrimary=${Boolean(nextProvisionalOverlay)}, goalStateBridge=${hasDraftGoalStateBridge})`);
+}
+
 function resolveSummaryEntryRange(ctx: ExtensionContext, agentRound: number): SummaryEntry["sessionEntryRange"] | undefined {
   return getCachedResolveAgentRoundEntryRange(ctx, agentRound) ?? undefined;
 }
@@ -337,6 +481,46 @@ function getEffectiveCuratorStatus(): GRCState["curator"]["status"] {
   return grcState?.curator.status ?? "idle";
 }
 
+function formatWidgetGoalPhase(grcState: GRCState | null): string | null {
+  if (!grcState) return null;
+
+  const effectiveObjectState = getEffectiveObjectState(grcState);
+  const userGoalTree = effectiveObjectState.userGoalTree;
+  const focusUserGoalId = userGoalTree?.currentFocusUserGoalId ?? null;
+  if (!userGoalTree || !focusUserGoalId) return null;
+
+  const focusUserGoal = userGoalTree.userGoals.find((goal) => goal.id === focusUserGoalId) ?? null;
+  if (!focusUserGoal) return null;
+
+  const currentXNodeModel = selectCurrentXNodeModel(userGoalTree, effectiveObjectState.xNodeModels);
+  const focusXNode = currentXNodeModel?.nodes.find((node) => node.id === currentXNodeModel.currentFocusXNodeId) ?? null;
+  const phase = focusXNode?.phase ?? phaseFromUserGoalStatus(focusUserGoal.status);
+  const phaseLabel = formatWidgetPhaseLabel(phase);
+  if (!phaseLabel) return null;
+
+  return `${phaseLabel}:${truncate(focusUserGoal.assertion.replace(/\s+/g, " ").trim(), 15)}`;
+}
+
+function phaseFromUserGoalStatus(status: "identified" | "planning" | "executing" | "completed"): GoalNodePhase {
+  if (status === "completed") return "complete";
+  if (status === "executing") return "execute";
+  return "plan";
+}
+
+function formatWidgetPhaseLabel(phase: GoalNodePhase): string {
+  switch (phase) {
+    case "plan":
+    case "plan_insufficient":
+      return "计划";
+    case "execute":
+    case "testing":
+    case "pending_acceptance":
+      return "实施";
+    case "complete":
+      return "完成";
+  }
+}
+
 function formatWidgetStatus(ctx: ExtensionContext, state: SessionState | null, grcState: GRCState | null): string {
   if (grcState?.runtimeMode === "off") {
     return "PTC:off";
@@ -344,14 +528,20 @@ function formatWidgetStatus(ctx: ExtensionContext, state: SessionState | null, g
 
   const parts: string[] = [];
 
+  const goalPhaseLabel = formatWidgetGoalPhase(grcState);
+  if (goalPhaseLabel) {
+    parts.push(goalPhaseLabel);
+  }
+
   const runLabel = currentRun.active ? `Run:${currentRun.turnCount}` : "Run:0";
   const contextUsageLabel = getContextUsageLabel(ctx);
   parts.push(`${runLabel} ${contextUsageLabel}`);
 
-  const sessionCreated = principles?.getDiagnostics().audit.effects.created ?? 0;
-  parts.push(formatSkillProofMetric(sessionCreated, skillReadCountCurrentSession));
   parts.push(`思:${formatSubagentRuntime(getEffectiveReflectorStatus(), reflectorStartedAt)}`);
   parts.push(`理:${formatSubagentRuntime(getEffectiveCuratorStatus(), curatorStartedAt)}`);
+
+  const sessionCreated = principles?.getDiagnostics().audit.effects.created ?? 0;
+  parts.push(formatSkillProofMetric(sessionCreated, skillReadCountCurrentSession));
 
   const baseStatus = parts.join(" | ");
   return appendWidgetNotice(baseStatus, widgetNotice, config?.grc.widgetNoticeMaxChars ?? 24);
@@ -526,6 +716,38 @@ async function openConfigInSystemEditor(filePath: string): Promise<{ ok: true } 
 // =============================================================================
 
 export default function (pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "applyUserGoalProjection",
+    label: "Apply UserGoal Projection",
+    description: "Apply object-first UserGoalProjectionOp and XNodeModelOp updates to PasstoContext state.",
+    promptSnippet: "Apply userGoal/xNode projection ops to the current PasstoContext object state.",
+    promptGuidelines: [
+      "Use applyUserGoalProjection when the Generator has identified, updated, completed, reopened, migrated, split, or merged user goals.",
+      "Use applyUserGoalProjection instead of draftGoalOp; represent review freshness with reviewState and execution state with xNodeModels.",
+      "Use applyUserGoalProjection with small incremental xNodeModelOps; xNodeModels are agent state machines, not one-shot static plan trees.",
+    ],
+    parameters: createApplyUserGoalProjectionToolParams(Type),
+    async execute(_toolCallId, params) {
+      const result = executeApplyUserGoalProjectionTool(params, {
+        getState: () => grcState,
+        setState: (state) => {
+          grcState = state;
+        },
+        appendState: (state) => {
+          try {
+            pi.appendEntry("grc-state", state);
+          } catch (err) {
+            logger?.warn("Failed to persist grc-state from applyUserGoalProjection:", err);
+          }
+        },
+      });
+      return {
+        content: [{ type: "text", text: result.text }],
+        details: result.details,
+      };
+    },
+  });
+
   pi.registerTool({
     name: "ptc_search_summary",
     label: "Search Session Summaries",
@@ -712,7 +934,11 @@ export default function (pi: ExtensionAPI) {
     const currentUserMessage = getCachedLatestUserMessageText(ctx);
     const previousAgentRoundMessageCount = getCachedPreviousAgentRoundEntries(ctx).length;
     const reflectorGoalState = grcState.curator.lastGoalState;
-    const reflectorGoalContext = buildReflectorGoalContext(reflectorGoalState);
+    const reflectorObjectState = getEffectiveObjectState(grcState);
+    const reflectorGoalContext = buildReflectorGoalContextFromObjectSidecars(
+      reflectorObjectState.userGoalTree,
+      reflectorObjectState.xNodeModels,
+    ) ?? buildReflectorGoalContext(reflectorGoalState);
     const reflectorInput = buildReflectorInput({
       currentRoundConversation: reflectorConversation,
       currentGoalState: reflectorGoalState,
@@ -761,17 +987,15 @@ export default function (pi: ExtensionAPI) {
               currentAgentRound,
               result?.diagnosis ?? null,
             );
-            if (result) {
-              appendReflectorArtifactEntry(pi, {
-                customType: "grc-reflector-artifact",
-                agentRound: currentAgentRound,
-                recordedAt: new Date().toISOString(),
-                diagnosis: result.diagnosis ?? null,
-                advice: null,
-                principleOps: result.principleOps,
-                assetCandidates: result.assetCandidates ?? [],
-              });
-            }
+            appendReflectorArtifactEntry(pi, {
+              customType: "grc-reflector-artifact",
+              agentRound: currentAgentRound,
+              recordedAt: new Date().toISOString(),
+              diagnosis: result?.diagnosis ?? null,
+              advice: null,
+              principleOps: result?.principleOps ?? [],
+              assetCandidates: result?.assetCandidates ?? [],
+            });
             reflectorStartedAt = null;
             logger?.debug(`Reflector finished (no substantive advice, processedUpToAgentRound=${processedAgentRound}, hasGoalState=${Boolean(reflectorGoalState)}, hasGoalContext=${Boolean(reflectorGoalContext)}, diagnosis=${formatReflectorDiagnosisLabel(result?.diagnosis) ?? "none"}, assetCandidates=${result?.assetCandidates?.length ?? 0})`);
             refreshWidget(ctx);
@@ -881,18 +1105,57 @@ export default function (pi: ExtensionAPI) {
           const processedUserTurns = Math.max(grcState.curator.processedUpToTurn, userTurnAtStart);
           const processedAgentRound = Math.max(grcState.curator.processedUpToAgentRound, targetPreviousAgentRound);
           if (!result) {
-            grcState = updateCuratorStatus(grcState, "done", null, processedUserTurns, 0, undefined, undefined, undefined, undefined, processedAgentRound, targetPreviousAgentRound);
+            grcState = updateCuratorStatus(grcState, "done", null, processedUserTurns, 0, undefined, undefined, undefined, undefined, null, processedAgentRound, undefined, targetPreviousAgentRound, null);
+            appendCuratorArtifactEntry(pi, {
+              customType: "grc-curator-artifact",
+              agentRound: targetPreviousAgentRound,
+              recordedAt: new Date().toISOString(),
+              processedUpToUserTurn: processedUserTurns,
+              summary: null,
+              summaryEntry: null,
+              goalState: null,
+              userGoalTree: null,
+              xNodeModels: null,
+              signal: null,
+              certaintyAssessment: null,
+              lastPolicyProjection: null,
+              latestRuntimeProof: null,
+              latestProofSignals: null,
+              draftGoalOp: null,
+              draftDispositions: null,
+              runtimeProvisionalOverlay: null,
+              latestGoalTransition: null,
+            });
             curatorStartedAt = null;
             refreshWidget(ctx);
             return;
           }
           const rejectionReasons = getCuratorGoalStateRejectionReasons(grcState.curator.lastGoalState, result);
           if (rejectionReasons.length > 0) {
+            const previousGoalStateSummary = summarizeGoalState(grcState.curator.lastGoalState);
+            const nextGoalStateSummary = summarizeGoalState(result.goalState);
             logger?.debug(
-              `Curator structured payload rejected (reasons=${rejectionReasons.join(",")}, previousActive=${grcState.curator.lastGoalState?.active.length ?? 0}, hasGoalState=${Boolean(result.goalState)}, nextActive=${result.goalState?.active.length ?? 0}, hasSummaryEntry=${Boolean(result.summaryEntry)}, summaryGoal=${JSON.stringify(result.summaryEntry?.summary.goal ?? "")}, closureEvidence=${result.closureEvidence.length})`,
+              `Curator structured payload rejected (reasons=${rejectionReasons.join(",")}, previousActive=${previousGoalStateSummary?.active ?? 0}, hasGoalState=${Boolean(result.goalState)}, nextActive=${nextGoalStateSummary?.active ?? 0}, hasSummaryEntry=${Boolean(result.summaryEntry)}, summaryGoal=${JSON.stringify(result.summaryEntry?.summary.goal ?? "")}, closureEvidence=${result.closureEvidence.length})`,
             );
           }
-          const reconciledResult = reconcileCuratorGoalState(grcState.curator.lastGoalState, result);
+          const previousGoalState = grcState.curator.lastGoalState;
+          const reconciliationGoalState = result.goalState ?? previousGoalState;
+          const stateUserGoalTree = grcState.curator.lastUserGoalTree?.userGoals.length ? grcState.curator.lastUserGoalTree : null;
+          const resultUserGoalTree = result.userGoalTree?.userGoals.length ? result.userGoalTree : null;
+          const previousUserGoalTreeForReconciliation = stateUserGoalTree
+            ?? resultUserGoalTree
+            ?? deriveUserGoalTreeFromGoalState(reconciliationGoalState);
+          const previousXNodeModelsForReconciliation = (grcState.curator.lastXNodeModels && grcState.curator.lastXNodeModels.length > 0)
+            ? grcState.curator.lastXNodeModels
+            : result.xNodeModels && result.xNodeModels.length > 0
+              ? result.xNodeModels
+              : deriveXNodeModelsFromGoalState(reconciliationGoalState, previousUserGoalTreeForReconciliation);
+          const reconciledResult = reconcileCuratorGoalState(previousGoalState, result, {
+            userGoalTree: previousUserGoalTreeForReconciliation,
+            xNodeModels: previousXNodeModelsForReconciliation,
+            agentRound: targetPreviousAgentRound,
+            nowIso: new Date().toISOString(),
+          });
           const normalizedSummaryEntry = hydrateSummaryEntryForSession(
             ctx,
             reconciledResult?.summaryEntry ?? null,
@@ -900,6 +1163,23 @@ export default function (pi: ExtensionAPI) {
           );
           const normalizedGoalState = reconciledResult?.goalState ?? null;
           const normalizedSignal = reconciledResult?.signal ?? null;
+          const normalizedCertaintyAssessment = reconciledResult?.certaintyAssessment ?? null;
+          const rawUserGoalTree = reconciledResult?.userGoalTree ?? result.userGoalTree ?? deriveUserGoalTreeFromGoalState(normalizedGoalState);
+          const rawXNodeModelsFromPayload = reconciledResult?.xNodeModels ?? result.xNodeModels ?? null;
+          const rawXNodeModels = rawXNodeModelsFromPayload && rawXNodeModelsFromPayload.length > 0
+            ? rawXNodeModelsFromPayload
+            : deriveXNodeModelsFromGoalState(normalizedGoalState, rawUserGoalTree);
+          const { userGoalTree: derivedUserGoalTree, xNodeModels: derivedXNodeModels } = applyCompletionClosure(rawUserGoalTree, rawXNodeModels);
+          const previousUserGoalTree = grcState.curator.lastUserGoalTree ?? deriveUserGoalTreeFromGoalState(previousGoalState);
+          const previousXNodeModels = (grcState.curator.lastXNodeModels && grcState.curator.lastXNodeModels.length > 0)
+            ? grcState.curator.lastXNodeModels
+            : deriveXNodeModelsFromGoalState(previousGoalState, previousUserGoalTree);
+          const latestGoalTransition = summarizeGoalTransitionFromObjectSidecars(previousUserGoalTree, previousXNodeModels, derivedUserGoalTree, derivedXNodeModels)
+            ?? summarizeGoalTransition(previousGoalState, normalizedGoalState);
+          const reconciledOverlay = applyDraftDispositionsToRuntimeProvisionalOverlay(
+            grcState.curator.runtimeProvisionalOverlay ?? null,
+            reconciledResult?.draftDispositions ?? result.draftDispositions ?? null,
+          );
           let nextState = updateCuratorStatus(
             grcState,
             "done",
@@ -910,9 +1190,42 @@ export default function (pi: ExtensionAPI) {
             normalizedGoalState ?? undefined,
             undefined,
             normalizedSignal ?? undefined,
+            normalizedCertaintyAssessment,
             processedAgentRound,
+            undefined,
             targetPreviousAgentRound,
+            latestGoalTransition,
           );
+          const currentFocusModel = derivedUserGoalTree
+            ? derivedXNodeModels.find((model) => model.userGoalId === derivedUserGoalTree.currentFocusUserGoalId) ?? null
+            : null;
+          const fallbackProofModel = derivedXNodeModels.find((model) => model.latestRuntimeProof || (model.latestProofSignals && model.latestProofSignals.length > 0)) ?? null;
+          const overlayProofModel = reconciledOverlay?.xNodeState?.xNodeModel ?? null;
+          const curatorProofRecord = reconciledResult?.latestRuntimeProof ?? result.latestRuntimeProof ?? null;
+          const curatorProofSignals = reconciledResult?.latestProofSignals ?? result.latestProofSignals ?? null;
+          const effectiveRuntimeProof = curatorProofRecord
+            ?? currentFocusModel?.latestRuntimeProof
+            ?? fallbackProofModel?.latestRuntimeProof
+            ?? overlayProofModel?.latestRuntimeProof
+            ?? null;
+          const effectiveProofSignals = curatorProofSignals && curatorProofSignals.length > 0
+            ? curatorProofSignals
+            : currentFocusModel?.latestProofSignals
+              ?? fallbackProofModel?.latestProofSignals
+              ?? overlayProofModel?.latestProofSignals
+              ?? curatorProofSignals
+              ?? null;
+          nextState = setCuratorObjectSidecars(nextState, {
+            userGoalTree: derivedUserGoalTree,
+            xNodeModels: derivedXNodeModels,
+            lastPolicyProjection: reconciledResult?.lastPolicyProjection ?? result.lastPolicyProjection ?? undefined,
+            latestRuntimeProof: effectiveRuntimeProof ?? undefined,
+            latestProofSignals: effectiveProofSignals ?? undefined,
+          });
+          nextState = setRuntimeProvisionalOverlay(nextState, reconciledOverlay);
+          if ((reconciledResult?.draftDispositions ?? result.draftDispositions ?? null)?.length && !reconciledOverlay) {
+            nextState = clearRuntimeProvisionalOverlay(nextState);
+          }
           if (normalizedSummaryEntry) {
             const pushed = pushSummaryCacheEntry(nextState, normalizedSummaryEntry, config.grc.summaryCacheSize);
             nextState = pushed.state;
@@ -921,6 +1234,15 @@ export default function (pi: ExtensionAPI) {
             }
           }
           grcState = nextState;
+          const artifactUserGoalTree = nextState.curator.lastUserGoalTree ?? derivedUserGoalTree;
+          const artifactXNodeModels = nextState.curator.lastXNodeModels ?? derivedXNodeModels;
+          const artifactRuntimeProof = nextState.curator.latestRuntimeProof ?? effectiveRuntimeProof;
+          const artifactProofSignals = nextState.curator.latestProofSignals ?? effectiveProofSignals;
+          const proofSource = curatorProofRecord || (curatorProofSignals && curatorProofSignals.length > 0)
+            ? "curator-payload"
+            : artifactRuntimeProof || (artifactProofSignals && artifactProofSignals.length > 0)
+              ? "x-node-fallback"
+              : "none";
           appendCuratorArtifactEntry(pi, {
             customType: "grc-curator-artifact",
             agentRound: targetPreviousAgentRound,
@@ -929,14 +1251,27 @@ export default function (pi: ExtensionAPI) {
             summary: reconciledResult?.summary ?? result.summary,
             summaryEntry: normalizedSummaryEntry,
             goalState: normalizedGoalState,
+            userGoalTree: artifactUserGoalTree,
+            xNodeModels: artifactXNodeModels,
+            reconciliationOps: reconciledResult?.reconciliationOps ?? result.reconciliationOps ?? null,
+            reconciliationWarnings: reconciledResult?.reconciliationWarnings ?? result.reconciliationWarnings ?? [],
+            auditAdvice: reconciledResult?.auditAdvice ?? result.auditAdvice ?? null,
             signal: reconciledResult?.signal ?? result.signal,
+            certaintyAssessment: reconciledResult?.certaintyAssessment ?? result.certaintyAssessment ?? null,
+            lastPolicyProjection: nextState.curator.lastPolicyProjection ?? null,
+            latestRuntimeProof: artifactRuntimeProof,
+            latestProofSignals: artifactProofSignals,
+            draftGoalOp: reconciledResult?.draftGoalOp ?? result.draftGoalOp ?? null,
+            draftDispositions: reconciledResult?.draftDispositions ?? result.draftDispositions ?? null,
+            runtimeProvisionalOverlay: reconciledOverlay,
+            latestGoalTransition,
           });
           curatorStartedAt = null;
           logger?.debug(
-            `Curator finished (summaryChars=${result.summary.length}, hasSummaryEntry=${Boolean(normalizedSummaryEntry)}, summaryCache=${grcState.curator.summaryCache.length}, hasGoalState=${Boolean(normalizedGoalState)}, signal=${normalizedSignal?.type ?? "none"}, processedUpToAgentRound=${processedAgentRound})`,
+            `Curator finished (summaryChars=${result.summary.length}, hasSummaryEntry=${Boolean(normalizedSummaryEntry)}, summaryCache=${grcState.curator.summaryCache.length}, hasGoalState=${Boolean(normalizedGoalState)}, hasCertaintyAssessment=${Boolean(normalizedCertaintyAssessment)}, hasPolicyProjection=${Boolean(grcState.curator.lastPolicyProjection)}, signal=${normalizedSignal?.type ?? "none"}, processedUpToAgentRound=${processedAgentRound}, proofSource=${proofSource}, hasRuntimeProof=${Boolean(effectiveRuntimeProof)}, proofSignalCount=${effectiveProofSignals?.length ?? 0})`,
           );
 
-          setTransientGRCStatus(ctx, normalizedGoalState ? "梳理完成 + 目标更新" : "梳理完成");
+          setTransientGRCStatus(ctx, latestGoalTransition?.label ?? (normalizedGoalState ? "梳理完成 + 目标更新" : "梳理完成"));
           refreshWidget(ctx);
         })
         .catch((err) => {
@@ -1277,6 +1612,7 @@ export default function (pi: ExtensionAPI) {
       }
 
       refreshWidget(ctx);
+      invalidateBranchRuntimeCache();
 
       if (
         isRuntimeEnabled()
@@ -1311,8 +1647,12 @@ export default function (pi: ExtensionAPI) {
       }
 
       currentRun = createInitialCurrentRunState();
+      invalidateBranchRuntimeCache();
 
       if (grcState) {
+        if (config.grc.draftGoalEnabled) {
+          logger?.debug("Legacy draftGoalOp runtime overlay is disabled in V2 projection-first mainline; use applyUserGoalProjection instead.");
+        }
         grcState = finishAgentRound(grcState);
         const currentUserTurns = getCurrentUserTurnCount();
         logger?.debug(
@@ -1514,6 +1854,12 @@ export default function (pi: ExtensionAPI) {
       ? `${currentUsage.tokens.toLocaleString()} / ${currentUsage.contextWindow.toLocaleString()}${currentUsage.percent != null ? ` (${Math.round(currentUsage.percent)}%)` : ""}`
       : null;
 
+    const effectiveObjectState = getEffectiveObjectState(grcState);
+    const currentXNodeModel = selectCurrentXNodeModel(
+      effectiveObjectState.userGoalTree,
+      effectiveObjectState.xNodeModels,
+    );
+
     const text = formatPTCStatus({
       sessionDisplayName,
       configFileLabel: terminalFileLink(getConfigFilePath()),
@@ -1542,15 +1888,61 @@ export default function (pi: ExtensionAPI) {
       latestReflectorAdvice: grcState.reflector.lastAdvice,
       latestReflectorDiagnosisLabel: formatReflectorDiagnosisLabel(grcState.reflector.lastDiagnosis),
       latestCuratorSummary: grcState.curator.lastSummary,
-      goalStateSnapshot: grcState.curator.lastGoalState
+      latestGoalTransitionLabel: grcState.curator.latestGoalTransition?.label ?? null,
+      currentUserGoal: (() => {
+        const focusUserGoalId = effectiveObjectState.userGoalTree?.currentFocusUserGoalId ?? null;
+        const focusUserGoal = focusUserGoalId
+          ? effectiveObjectState.userGoalTree?.userGoals.find((goal) => goal.id === focusUserGoalId) ?? null
+          : null;
+        return focusUserGoal
+          ? {
+              id: focusUserGoal.id,
+              assertion: focusUserGoal.assertion,
+              executionState: focusUserGoal.executionState,
+              reviewState: focusUserGoal.reviewState,
+              relationState: focusUserGoal.relationState,
+            }
+          : null;
+      })(),
+      currentXNode: (() => {
+        const focusXNode = currentXNodeModel?.nodes.find((node) => node.id === currentXNodeModel.currentFocusXNodeId) ?? null;
+        return focusXNode
+          ? {
+              id: focusXNode.id,
+              phase: focusXNode.phase,
+              atomicity: focusXNode.atomicity,
+              status: focusXNode.status,
+            }
+          : null;
+      })(),
+      latestNextStepPolicy: getRuntimeSurfacePolicySnapshot(grcState),
+      latestRuntimeProof: (grcState.curator.latestRuntimeProof ?? currentXNodeModel?.latestRuntimeProof)
         ? {
-            active: grcState.curator.lastGoalState.active.length,
-            completed: grcState.curator.lastGoalState.completed.length,
-            migrations: grcState.curator.lastGoalState.migrations.length,
-            pruned: grcState.curator.lastGoalState.prunedCount,
-            updatedRound: grcState.curator.lastGoalState.agentRound,
+            proofStatus: (grcState.curator.latestRuntimeProof ?? currentXNodeModel?.latestRuntimeProof)!.proofStatus,
+            proofMode: (grcState.curator.latestRuntimeProof ?? currentXNodeModel?.latestRuntimeProof)!.proofMode,
+            targetXNodeId: (grcState.curator.latestRuntimeProof ?? currentXNodeModel?.latestRuntimeProof)!.targetXNodeId,
+            signalTypes: (grcState.curator.latestProofSignals ?? currentXNodeModel?.latestProofSignals ?? []).map((signal) => signal.type),
           }
         : null,
+      provisionalOverlay: grcState.curator.runtimeProvisionalOverlay
+        ? {
+            active: true,
+            sourceAgentRound: grcState.curator.runtimeProvisionalOverlay.sourceAgentRound,
+            hasUserGoalState: Boolean(grcState.curator.runtimeProvisionalOverlay.userGoalState),
+            hasXNodeState: Boolean(grcState.curator.runtimeProvisionalOverlay.xNodeState),
+          }
+        : null,
+      latestCompletion: currentXNodeModel || effectiveObjectState.userGoalTree?.completion
+        ? {
+            localComplete: currentXNodeModel?.completion?.localComplete ?? false,
+            modelComplete: currentXNodeModel?.completion?.modelComplete ?? false,
+            treeComplete: effectiveObjectState.userGoalTree?.completion?.treeComplete ?? false,
+            nextFocusUserGoalId: effectiveObjectState.userGoalTree?.completion?.nextFocusUserGoalId ?? null,
+            nextOpenXNodeId: currentXNodeModel?.completion?.nextOpenXNodeId ?? null,
+          }
+        : null,
+      goalStateSnapshot: summarizeGoalStateFromObjectSidecars(effectiveObjectState.userGoalTree, effectiveObjectState.xNodeModels)
+        ?? summarizeGoalState(grcState.curator.lastGoalState),
     });
 
     ctx.ui.notify(text, "info");
@@ -1631,16 +2023,21 @@ export default function (pi: ExtensionAPI) {
     });
     const latestGoalState = grcState.curator.lastGoalState;
     const latestSummaryEntry = grcState.curator.lastSummaryEntry;
+    const effectiveObjectState = getEffectiveObjectState(grcState);
     const kickoffLines: string[] = [
       "继续当前工作。PasstoContext 已执行 session rotate。",
       `旧 session: ${currentSessionFile}`,
       `lineage summaries: ${lineageEntries.length}`,
     ];
 
-    if (latestGoalState?.active.length) {
+    const objectOpenAssertions = getGoalStateOpenAssertionsFromObjectSidecars(effectiveObjectState.userGoalTree, effectiveObjectState.xNodeModels, 5);
+    const openAssertions = objectOpenAssertions.length > 0
+      ? objectOpenAssertions
+      : getGoalStateOpenAssertions(latestGoalState, 5);
+    if (openAssertions.length > 0) {
       kickoffLines.push("当前活跃目标：");
-      for (const item of latestGoalState.active.slice(0, 5)) {
-        kickoffLines.push(`- ${item.assertion}`);
+      for (const assertion of openAssertions) {
+        kickoffLines.push(`- ${assertion}`);
       }
     }
 

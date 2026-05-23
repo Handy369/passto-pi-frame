@@ -26,12 +26,54 @@ export interface PTCStatusInput {
   latestReflectorAdvice?: string | null;
   latestReflectorDiagnosisLabel?: string | null;
   latestCuratorSummary?: string | null;
+  latestGoalTransitionLabel?: string | null;
+  currentUserGoal?: {
+    id: string;
+    assertion: string;
+    executionState?: string;
+    reviewState?: string;
+    relationState?: string;
+  } | null;
+  currentXNode?: {
+    id: string;
+    phase: string;
+    atomicity: string;
+    status: string;
+  } | null;
+  latestNextStepPolicy?: {
+    nextStepType: "plan_repair" | "generate_children" | "execute_atomic_work" | "run_tests" | "seek_acceptance" | "upward_regression";
+    confidence: number;
+    runtimeProof: "closed" | "open" | "partial";
+    keyGaps: string[];
+    source?: "x-node-policy" | "certainty-assessment";
+  } | null;
+  latestRuntimeProof?: {
+    proofStatus: "passed" | "failed" | "partial" | "missing";
+    proofMode: "tests" | "runtime" | "human-check" | "self-proof" | "mixed";
+    targetXNodeId: string;
+    signalTypes?: string[];
+  } | null;
+  latestCompletion?: {
+    localComplete: boolean;
+    modelComplete: boolean;
+    treeComplete: boolean;
+    nextFocusUserGoalId: string | null;
+    nextOpenXNodeId: string | null;
+  } | null;
+  provisionalOverlay?: {
+    active: boolean;
+    sourceAgentRound: number | null;
+    hasUserGoalState: boolean;
+    hasXNodeState: boolean;
+  } | null;
   goalStateSnapshot?: {
+    version: 1 | 2;
     active: number;
     completed: number;
     migrations: number;
     pruned: number;
     updatedRound: number;
+    nodes?: number;
   } | null;
 }
 
@@ -70,6 +112,48 @@ export function formatPTCStatus(input: PTCStatusInput): string {
     lines.push('', '### Latest Reflector Diagnosis', input.latestReflectorDiagnosisLabel);
   }
 
+  if (input.latestGoalTransitionLabel) {
+    lines.push('', '### Latest Goal Transition', input.latestGoalTransitionLabel);
+  }
+
+  if (input.currentUserGoal || input.currentXNode) {
+    lines.push('', '### Current Object Focus');
+    if (input.currentUserGoal) {
+      lines.push(`- userGoalId=${input.currentUserGoal.id}, executionState=${input.currentUserGoal.executionState ?? 'unknown'}, reviewState=${input.currentUserGoal.reviewState ?? 'unknown'}, relationState=${input.currentUserGoal.relationState ?? 'unknown'}`);
+      lines.push(`- assertion=${input.currentUserGoal.assertion}`);
+    }
+    if (input.currentXNode) {
+      lines.push(`- xNodeId=${input.currentXNode.id}, phase=${input.currentXNode.phase}, atomicity=${input.currentXNode.atomicity}, status=${input.currentXNode.status}`);
+    }
+  }
+
+  if (input.latestNextStepPolicy) {
+    lines.push('', '### Latest Policy Projection');
+    lines.push(`- nextStepType=${input.latestNextStepPolicy.nextStepType}, confidence=${input.latestNextStepPolicy.confidence}, runtimeProof=${input.latestNextStepPolicy.runtimeProof}${input.latestNextStepPolicy.source ? `, source=${input.latestNextStepPolicy.source}` : ''}`);
+    if (input.latestNextStepPolicy.keyGaps.length > 0) {
+      lines.push(`- keyGaps=${input.latestNextStepPolicy.keyGaps.join('；')}`);
+    }
+  }
+
+  if (input.latestRuntimeProof) {
+    lines.push('', '### Latest Runtime Proof');
+    lines.push(`- targetXNodeId=${input.latestRuntimeProof.targetXNodeId}, proofStatus=${input.latestRuntimeProof.proofStatus}, proofMode=${input.latestRuntimeProof.proofMode}`);
+    if (input.latestRuntimeProof.signalTypes && input.latestRuntimeProof.signalTypes.length > 0) {
+      lines.push(`- proofSignals=${input.latestRuntimeProof.signalTypes.join('；')}`);
+    }
+  }
+
+  if (input.provisionalOverlay) {
+    lines.push('', '### Runtime Provisional Overlay');
+    lines.push(`- active=${input.provisionalOverlay.active}, sourceAgentRound=${input.provisionalOverlay.sourceAgentRound ?? 'none'}, userGoalState=${input.provisionalOverlay.hasUserGoalState}, xNodeState=${input.provisionalOverlay.hasXNodeState}`);
+  }
+
+  if (input.latestCompletion) {
+    lines.push('', '### Latest Completion Closure');
+    lines.push(`- localComplete=${input.latestCompletion.localComplete}, modelComplete=${input.latestCompletion.modelComplete}, treeComplete=${input.latestCompletion.treeComplete}`);
+    lines.push(`- nextFocusUserGoalId=${input.latestCompletion.nextFocusUserGoalId ?? 'none'}, nextOpenXNodeId=${input.latestCompletion.nextOpenXNodeId ?? 'none'}`);
+  }
+
   if (input.latestReflectorAdvice) {
     lines.push('', '### Latest Reflector Advice', input.latestReflectorAdvice);
   }
@@ -84,7 +168,7 @@ export function formatPTCStatus(input: PTCStatusInput): string {
   if (input.goalStateSnapshot) {
     lines.push('', '### GoalState Snapshot');
     lines.push(
-      `- active=${input.goalStateSnapshot.active}, completed=${input.goalStateSnapshot.completed}, migrations=${input.goalStateSnapshot.migrations}, pruned=${input.goalStateSnapshot.pruned}, updatedRound=${input.goalStateSnapshot.updatedRound}`,
+      `- version=${input.goalStateSnapshot.version}, active=${input.goalStateSnapshot.active}, completed=${input.goalStateSnapshot.completed}, migrations=${input.goalStateSnapshot.migrations}, pruned=${input.goalStateSnapshot.pruned}, updatedRound=${input.goalStateSnapshot.updatedRound}${input.goalStateSnapshot.nodes != null ? `, nodes=${input.goalStateSnapshot.nodes}` : ''}`,
     );
   }
 

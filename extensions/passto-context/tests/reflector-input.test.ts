@@ -62,16 +62,19 @@ test('buildReflectorGoalContext derives focus and sibling goals from GoalStateDo
       id: 'g-12',
       assertion: '升级 Reflector 输入契约',
       status: 'active',
+      signal: 'explicit',
     },
   ]);
   assert.deepEqual(context.siblingActiveGoals, [
     {
       id: 'g-10',
       assertion: '保留 GoalState 作为当前目标单核',
+      signal: 'explicit',
     },
     {
       id: 'g-8',
       assertion: '清理旧账本设计残留',
+      signal: 'inferred',
     },
   ]);
   assert.deepEqual(context.recentMigrations, [

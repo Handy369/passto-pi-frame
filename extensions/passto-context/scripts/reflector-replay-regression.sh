@@ -133,8 +133,8 @@ cat > "$CONFIG_PATH" <<'JSON'
   "grc": {
     "enabled": true,
     "midRunTurnThreshold": 99,
-    "subagentModel": "gemini-3-flash",
-    "subagentModelProvider": "opencode"
+    "subagentModel": "deepseek-v4-flash",
+    "subagentModelProvider": "deepseek"
   }
 }
 JSON
@@ -155,7 +155,7 @@ EOF
 
 printf '[info] Starting Pi reflector replay regression session\n'
 tmux -L "$SOCK_NAME" new-session -d -s "$SESSION_NAME" -x 140 -y 42 \
-  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider ds4 --model deepseek-v4-flash --thinking low --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
+  "env PASSTOCONTEXT_CONFIG='$CONFIG_PATH' pi --provider deepseek --model deepseek-v4-flash --thinking low --session-dir '$SESSION_DIR' --no-extensions --extension '$EXT_DIR' --no-skills"
 
 wait_for_pattern startup "PasstoContext ready|Loaded [0-9]+ principles" 60 1
 capture startup
@@ -177,6 +177,9 @@ fi
 echo "[info] session_jsonl=$SESSION_JSONL"
 
 wait_for_final_answer "$SESSION_JSONL" 240 1
+# Some models stop after tool-result-heavy answers without immediately emitting agent_end.
+# Send an explicit interrupt to flush the round so post-round reflector replay can run.
+tmux -L "$SOCK_NAME" send-keys -t "$SESSION_NAME" C-c
 wait_for_jsonl_pattern "$SESSION_JSONL" '"customType":"grc-reflector-artifact"' 360 1
 
 printf '[info] Test 2: check status before reload\n'

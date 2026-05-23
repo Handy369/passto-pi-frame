@@ -1,4 +1,5 @@
 import { buildBeforeAgentStartPrompt } from "./before-agent-start-injection.ts";
+import { getRuntimeSurfacePolicySnapshot } from "./grc-policy-surface.ts";
 import type { GRCState, Logger, MemoryItem, PasstoContextConfig, PrincipleItem } from "./types.ts";
 
 interface BranchEntryLike {
@@ -96,8 +97,9 @@ export function createBeforeAgentStartHandler(deps: BeforeAgentStartHandlerDeps)
         deps.logger?.debug(`Injected ${promptInjection.injectedMemories.length} memories`);
       }
 
+      const surfacePolicy = getRuntimeSurfacePolicySnapshot(grcState);
       deps.logger?.debug(
-        `before_agent_start injection summary: ${injectionDiagnostics.join(" | ")} | state(mode=${grcState?.mode ?? "n/a"}, runtimeMode=${grcState?.runtimeMode ?? "n/a"}, hasGoalState=${Boolean(grcState?.curator.lastGoalState)}, summaryCache=${grcState?.curator.summaryCache.length ?? 0}, lastSignal=${grcState?.curator.lastSignal?.type ?? "none"}, reflector=${grcState?.reflector.status ?? "n/a"}, curator=${grcState?.curator.status ?? "n/a"})`,
+        `before_agent_start injection summary: ${injectionDiagnostics.join(" | ")} | state(mode=${grcState?.mode ?? "n/a"}, runtimeMode=${grcState?.runtimeMode ?? "n/a"}, hasGoalState=${Boolean(grcState?.curator.lastGoalState)}, summaryCache=${grcState?.curator.summaryCache.length ?? 0}, lastSignal=${grcState?.curator.lastSignal?.type ?? "none"}, reflector=${grcState?.reflector.status ?? "n/a"}, curator=${grcState?.curator.status ?? "n/a"}, nextStepType=${surfacePolicy?.nextStepType ?? "none"}, policyConfidence=${surfacePolicy?.confidence ?? "none"}, policySource=${surfacePolicy?.source ?? "none"})`,
       );
 
       if (systemPrompt !== event.systemPrompt) {
