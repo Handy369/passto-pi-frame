@@ -1,0 +1,1157 @@
+{
+  "version": "passto-desk-domain-json/v3",
+  "generatedAt": "2026-05-20T01:52:25.194Z",
+  "source": {
+    "inputPath": "/Users/handy/dev/passto-ai/extensions/passto-desk/examples/domain-v3-lanes-groups.excalidraw",
+    "outputPath": "/Users/handy/dev/passto-ai/extensions/passto-desk/examples/domain-v3-lanes-groups.roundtrip.domain.json",
+    "sourceType": "excalidraw-scene"
+  },
+  "semantic": {
+    "objects": [
+      {
+        "id": "user-draft",
+        "type": "state",
+        "title": "用户提交初稿",
+        "visual": {
+          "shape": "ellipse",
+          "style": {
+            "strokeColor": "#0b6e4f",
+            "backgroundColor": "#eaf7ea",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "roundness": {
+              "type": 3
+            }
+          },
+          "fontSize": 20
+        }
+      },
+      {
+        "id": "review",
+        "type": "action",
+        "title": "编辑审阅",
+        "visual": {
+          "shape": "rectangle",
+          "style": {
+            "strokeColor": "#1e1e1e",
+            "backgroundColor": "#e8f0fe",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "roundness": {
+              "type": 3
+            }
+          },
+          "fontSize": 20
+        }
+      },
+      {
+        "id": "decision",
+        "type": "decision",
+        "title": "是否通过",
+        "visual": {
+          "shape": "diamond",
+          "style": {
+            "strokeColor": "#8a6700",
+            "backgroundColor": "#fff4cc",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "roundness": {
+              "type": 3
+            }
+          },
+          "fontSize": 20
+        }
+      },
+      {
+        "id": "approved",
+        "type": "state",
+        "title": "通过发布",
+        "visual": {
+          "shape": "ellipse",
+          "style": {
+            "strokeColor": "#0b6e4f",
+            "backgroundColor": "#eaf7ea",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "roundness": {
+              "type": 3
+            }
+          },
+          "fontSize": 20
+        }
+      },
+      {
+        "id": "rework",
+        "type": "action",
+        "title": "返回修改",
+        "visual": {
+          "shape": "rectangle",
+          "style": {
+            "strokeColor": "#1e1e1e",
+            "backgroundColor": "#e8f0fe",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "roundness": {
+              "type": 3
+            }
+          },
+          "fontSize": 20
+        }
+      },
+      {
+        "id": "notify",
+        "type": "action",
+        "title": "通知作者",
+        "visual": {
+          "shape": "rectangle",
+          "style": {
+            "strokeColor": "#1e1e1e",
+            "backgroundColor": "#e8f0fe",
+            "fillStyle": "solid",
+            "strokeWidth": 1,
+            "strokeStyle": "solid",
+            "roughness": 0,
+            "opacity": 100,
+            "roundness": {
+              "type": 3
+            }
+          },
+          "fontSize": 20
+        }
+      }
+    ],
+    "relations": [
+      {
+        "id": "r1",
+        "type": "transition",
+        "from": "user-draft",
+        "to": "review",
+        "label": "提交",
+        "visual": {
+          "fromSide": "right",
+          "toSide": "left",
+          "fontSize": 16,
+          "strokeColor": "#1e1e1e",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "elbowed": true
+        },
+        "raw": {
+          "geometry": {
+            "x": 300,
+            "y": 164,
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                1176,
+                0
+              ],
+              [
+                1176,
+                180
+              ],
+              [
+                -180,
+                180
+              ]
+            ]
+          },
+          "binding": {
+            "start": {
+              "elementId": "user-draft",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            },
+            "end": {
+              "elementId": "review",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            }
+          }
+        }
+      },
+      {
+        "id": "r2",
+        "type": "transition",
+        "from": "review",
+        "to": "decision",
+        "label": null,
+        "visual": {
+          "fromSide": "right",
+          "toSide": "left",
+          "fontSize": 16,
+          "strokeColor": "#1e1e1e",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "elbowed": false
+        },
+        "raw": {
+          "geometry": {
+            "x": 300,
+            "y": 344,
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                60,
+                0
+              ]
+            ]
+          },
+          "binding": {
+            "start": {
+              "elementId": "review",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            },
+            "end": {
+              "elementId": "decision",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            }
+          }
+        }
+      },
+      {
+        "id": "r3",
+        "type": "transition",
+        "from": "decision",
+        "to": "approved",
+        "label": "是",
+        "visual": {
+          "fromSide": "right",
+          "toSide": "left",
+          "fontSize": 16,
+          "strokeColor": "#1e1e1e",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "elbowed": true
+        },
+        "raw": {
+          "geometry": {
+            "x": 540,
+            "y": 344,
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                1476,
+                0
+              ],
+              [
+                1476,
+                0
+              ],
+              [
+                60,
+                0
+              ]
+            ]
+          },
+          "binding": {
+            "start": {
+              "elementId": "decision",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            },
+            "end": {
+              "elementId": "approved",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            }
+          }
+        }
+      },
+      {
+        "id": "r4",
+        "type": "transition",
+        "from": "decision",
+        "to": "rework",
+        "label": "否",
+        "visual": {
+          "fromSide": "right",
+          "toSide": "left",
+          "fontSize": 16,
+          "strokeColor": "#1e1e1e",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "elbowed": true
+        },
+        "raw": {
+          "geometry": {
+            "x": 540,
+            "y": 344,
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                1476,
+                0
+              ],
+              [
+                1476,
+                0
+              ],
+              [
+                300,
+                0
+              ]
+            ]
+          },
+          "binding": {
+            "start": {
+              "elementId": "decision",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            },
+            "end": {
+              "elementId": "rework",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            }
+          }
+        }
+      },
+      {
+        "id": "r5",
+        "type": "transition",
+        "from": "rework",
+        "to": "notify",
+        "label": "提醒",
+        "visual": {
+          "fromSide": "right",
+          "toSide": "left",
+          "fontSize": 16,
+          "strokeColor": "#1e1e1e",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "elbowed": true
+        },
+        "raw": {
+          "geometry": {
+            "x": 1020,
+            "y": 344,
+            "points": [
+              [
+                0,
+                0
+              ],
+              [
+                1896,
+                0
+              ],
+              [
+                1896,
+                -180
+              ],
+              [
+                -660,
+                -180
+              ]
+            ]
+          },
+          "binding": {
+            "start": {
+              "elementId": "rework",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            },
+            "end": {
+              "elementId": "notify",
+              "focus": 0,
+              "gap": 1,
+              "fixedPoint": null
+            }
+          }
+        }
+      }
+    ],
+    "notes": []
+  },
+  "view": {
+    "id": "main",
+    "kind": "flowchart",
+    "direction": "LR",
+    "lanes": [
+      {
+        "id": "editor",
+        "title": "编辑",
+        "sourceNodeId": "lane-frame-editor",
+        "confidence": "explicit"
+      },
+      {
+        "id": "author",
+        "title": "作者",
+        "sourceNodeId": "lane-frame-author",
+        "confidence": "explicit"
+      }
+    ],
+    "groups": [
+      {
+        "id": "review-loop",
+        "title": "审阅回路",
+        "memberObjectIds": [
+          "user-draft",
+          "review",
+          "decision",
+          "approved",
+          "rework",
+          "notify"
+        ],
+        "sourceNodeId": "review-loop",
+        "confidence": "explicit"
+      }
+    ],
+    "members": [
+      {
+        "objectId": "user-draft",
+        "laneId": "author",
+        "priority": 1,
+        "width": 180,
+        "height": 88
+      },
+      {
+        "objectId": "review",
+        "laneId": "editor",
+        "priority": 2,
+        "width": 180,
+        "height": 88
+      },
+      {
+        "objectId": "decision",
+        "laneId": "editor",
+        "priority": 3,
+        "width": 180,
+        "height": 88
+      },
+      {
+        "objectId": "notify",
+        "laneId": "author",
+        "priority": 4,
+        "width": 180,
+        "height": 88
+      },
+      {
+        "objectId": "approved",
+        "laneId": "editor",
+        "priority": 5,
+        "width": 180,
+        "height": 88
+      },
+      {
+        "objectId": "rework",
+        "laneId": "editor",
+        "priority": 6,
+        "width": 180,
+        "height": 88
+      }
+    ],
+    "visibleRelations": [
+      "r1",
+      "r2",
+      "r3",
+      "r4",
+      "r5"
+    ]
+  },
+  "mapping": {
+    "objectToNode": [
+      {
+        "objectId": "user-draft",
+        "nodeId": "user-draft",
+        "labelTextElementId": "user-draft-label"
+      },
+      {
+        "objectId": "review",
+        "nodeId": "review",
+        "labelTextElementId": "review-label"
+      },
+      {
+        "objectId": "decision",
+        "nodeId": "decision",
+        "labelTextElementId": "decision-label"
+      },
+      {
+        "objectId": "approved",
+        "nodeId": "approved",
+        "labelTextElementId": "approved-label"
+      },
+      {
+        "objectId": "rework",
+        "nodeId": "rework",
+        "labelTextElementId": "rework-label"
+      },
+      {
+        "objectId": "notify",
+        "nodeId": "notify",
+        "labelTextElementId": "notify-label"
+      }
+    ],
+    "relationToEdge": [
+      {
+        "relationId": "r1",
+        "edgeId": "r1"
+      },
+      {
+        "relationId": "r2",
+        "edgeId": "r2"
+      },
+      {
+        "relationId": "r3",
+        "edgeId": "r3"
+      },
+      {
+        "relationId": "r4",
+        "edgeId": "r4"
+      },
+      {
+        "relationId": "r5",
+        "edgeId": "r5"
+      }
+    ],
+    "groupToContainer": [
+      {
+        "groupId": "review-loop",
+        "sourceNodeId": "review-loop"
+      }
+    ],
+    "laneToContainer": [
+      {
+        "laneId": "editor",
+        "sourceNodeId": "lane-frame-editor"
+      },
+      {
+        "laneId": "author",
+        "sourceNodeId": "lane-frame-author"
+      }
+    ]
+  },
+  "visual": {
+    "theme": "light",
+    "palette": {},
+    "typography": {
+      "nodeFontSize": 20,
+      "edgeFontSize": 16
+    },
+    "layoutPolicy": {
+      "direction": "LR",
+      "primarySpacingX": 240,
+      "primarySpacingY": 130,
+      "laneGap": 180,
+      "preferOrthogonal": true
+    }
+  },
+  "scene": {
+    "totalElementCount": 27,
+    "activeElementCount": 27,
+    "bounds": {
+      "minX": 80,
+      "minY": 96,
+      "maxX": 1374,
+      "maxY": 412,
+      "width": 1294,
+      "height": 316
+    },
+    "typeCounts": {
+      "rectangle": 6,
+      "ellipse": 2,
+      "diamond": 1,
+      "text": 13,
+      "arrow": 5
+    },
+    "appState": {
+      "theme": "light",
+      "viewBackgroundColor": "#ffffff",
+      "name": "Review Workflow"
+    }
+  },
+  "warnings": [],
+  "freeTexts": [],
+  "raw": {
+    "unmodeledElementIds": []
+  },
+  "legacy": {
+    "nodes": [
+      {
+        "id": "user-draft",
+        "objectType": "state",
+        "kind": "ellipse",
+        "geometry": {
+          "x": 120,
+          "y": 120,
+          "width": 180,
+          "height": 88,
+          "centerX": 210,
+          "centerY": 164,
+          "angle": 0
+        },
+        "anchors": {
+          "top": {
+            "x": 210,
+            "y": 120
+          },
+          "right": {
+            "x": 300,
+            "y": 164
+          },
+          "bottom": {
+            "x": 210,
+            "y": 208
+          },
+          "left": {
+            "x": 120,
+            "y": 164
+          }
+        },
+        "label": {
+          "text": "用户提交初稿",
+          "textElementId": "user-draft-label",
+          "binding": "bound",
+          "containerId": "user-draft",
+          "fontSize": 20
+        },
+        "style": {
+          "strokeColor": "#0b6e4f",
+          "backgroundColor": "#eaf7ea",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": {
+            "type": 3
+          }
+        },
+        "raw": {
+          "boundElements": [
+            {
+              "id": "user-draft-label",
+              "type": "text"
+            },
+            {
+              "id": "r1",
+              "type": "arrow"
+            }
+          ],
+          "semanticObjectId": "user-draft",
+          "laneId": "author"
+        }
+      },
+      {
+        "id": "review",
+        "objectType": "action",
+        "kind": "rectangle",
+        "geometry": {
+          "x": 120,
+          "y": 300,
+          "width": 180,
+          "height": 88,
+          "centerX": 210,
+          "centerY": 344,
+          "angle": 0
+        },
+        "anchors": {
+          "top": {
+            "x": 210,
+            "y": 300
+          },
+          "right": {
+            "x": 300,
+            "y": 344
+          },
+          "bottom": {
+            "x": 210,
+            "y": 388
+          },
+          "left": {
+            "x": 120,
+            "y": 344
+          }
+        },
+        "label": {
+          "text": "编辑审阅",
+          "textElementId": "review-label",
+          "binding": "bound",
+          "containerId": "review",
+          "fontSize": 20
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "#e8f0fe",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": {
+            "type": 3
+          }
+        },
+        "raw": {
+          "boundElements": [
+            {
+              "id": "review-label",
+              "type": "text"
+            },
+            {
+              "id": "r1",
+              "type": "arrow"
+            },
+            {
+              "id": "r2",
+              "type": "arrow"
+            }
+          ],
+          "semanticObjectId": "review",
+          "laneId": "editor"
+        }
+      },
+      {
+        "id": "decision",
+        "objectType": "decision",
+        "kind": "diamond",
+        "geometry": {
+          "x": 360,
+          "y": 300,
+          "width": 180,
+          "height": 88,
+          "centerX": 450,
+          "centerY": 344,
+          "angle": 0
+        },
+        "anchors": {
+          "top": {
+            "x": 450,
+            "y": 300
+          },
+          "right": {
+            "x": 540,
+            "y": 344
+          },
+          "bottom": {
+            "x": 450,
+            "y": 388
+          },
+          "left": {
+            "x": 360,
+            "y": 344
+          }
+        },
+        "label": {
+          "text": "是否通过",
+          "textElementId": "decision-label",
+          "binding": "bound",
+          "containerId": "decision",
+          "fontSize": 20
+        },
+        "style": {
+          "strokeColor": "#8a6700",
+          "backgroundColor": "#fff4cc",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": {
+            "type": 3
+          }
+        },
+        "raw": {
+          "boundElements": [
+            {
+              "id": "decision-label",
+              "type": "text"
+            },
+            {
+              "id": "r2",
+              "type": "arrow"
+            },
+            {
+              "id": "r3",
+              "type": "arrow"
+            },
+            {
+              "id": "r4",
+              "type": "arrow"
+            }
+          ],
+          "semanticObjectId": "decision",
+          "laneId": "editor"
+        }
+      },
+      {
+        "id": "approved",
+        "objectType": "state",
+        "kind": "ellipse",
+        "geometry": {
+          "x": 600,
+          "y": 300,
+          "width": 180,
+          "height": 88,
+          "centerX": 690,
+          "centerY": 344,
+          "angle": 0
+        },
+        "anchors": {
+          "top": {
+            "x": 690,
+            "y": 300
+          },
+          "right": {
+            "x": 780,
+            "y": 344
+          },
+          "bottom": {
+            "x": 690,
+            "y": 388
+          },
+          "left": {
+            "x": 600,
+            "y": 344
+          }
+        },
+        "label": {
+          "text": "通过发布",
+          "textElementId": "approved-label",
+          "binding": "bound",
+          "containerId": "approved",
+          "fontSize": 20
+        },
+        "style": {
+          "strokeColor": "#0b6e4f",
+          "backgroundColor": "#eaf7ea",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": {
+            "type": 3
+          }
+        },
+        "raw": {
+          "boundElements": [
+            {
+              "id": "approved-label",
+              "type": "text"
+            },
+            {
+              "id": "r3",
+              "type": "arrow"
+            }
+          ],
+          "semanticObjectId": "approved",
+          "laneId": "editor"
+        }
+      },
+      {
+        "id": "rework",
+        "objectType": "action",
+        "kind": "rectangle",
+        "geometry": {
+          "x": 840,
+          "y": 300,
+          "width": 180,
+          "height": 88,
+          "centerX": 930,
+          "centerY": 344,
+          "angle": 0
+        },
+        "anchors": {
+          "top": {
+            "x": 930,
+            "y": 300
+          },
+          "right": {
+            "x": 1020,
+            "y": 344
+          },
+          "bottom": {
+            "x": 930,
+            "y": 388
+          },
+          "left": {
+            "x": 840,
+            "y": 344
+          }
+        },
+        "label": {
+          "text": "返回修改",
+          "textElementId": "rework-label",
+          "binding": "bound",
+          "containerId": "rework",
+          "fontSize": 20
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "#e8f0fe",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": {
+            "type": 3
+          }
+        },
+        "raw": {
+          "boundElements": [
+            {
+              "id": "rework-label",
+              "type": "text"
+            },
+            {
+              "id": "r4",
+              "type": "arrow"
+            },
+            {
+              "id": "r5",
+              "type": "arrow"
+            }
+          ],
+          "semanticObjectId": "rework",
+          "laneId": "editor"
+        }
+      },
+      {
+        "id": "notify",
+        "objectType": "action",
+        "kind": "rectangle",
+        "geometry": {
+          "x": 360,
+          "y": 120,
+          "width": 180,
+          "height": 88,
+          "centerX": 450,
+          "centerY": 164,
+          "angle": 0
+        },
+        "anchors": {
+          "top": {
+            "x": 450,
+            "y": 120
+          },
+          "right": {
+            "x": 540,
+            "y": 164
+          },
+          "bottom": {
+            "x": 450,
+            "y": 208
+          },
+          "left": {
+            "x": 360,
+            "y": 164
+          }
+        },
+        "label": {
+          "text": "通知作者",
+          "textElementId": "notify-label",
+          "binding": "bound",
+          "containerId": "notify",
+          "fontSize": 20
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "#e8f0fe",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": {
+            "type": 3
+          }
+        },
+        "raw": {
+          "boundElements": [
+            {
+              "id": "notify-label",
+              "type": "text"
+            },
+            {
+              "id": "r5",
+              "type": "arrow"
+            }
+          ],
+          "semanticObjectId": "notify",
+          "laneId": "author"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "r1",
+        "kind": "arrow",
+        "from": {
+          "elementId": "user-draft",
+          "side": "right"
+        },
+        "to": {
+          "elementId": "review",
+          "side": "left"
+        },
+        "label": {
+          "text": "提交",
+          "textElementId": "r1-label",
+          "binding": "bound",
+          "containerId": "r1",
+          "fontSize": 16
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "transparent",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": null
+        }
+      },
+      {
+        "id": "r2",
+        "kind": "arrow",
+        "from": {
+          "elementId": "review",
+          "side": "right"
+        },
+        "to": {
+          "elementId": "decision",
+          "side": "left"
+        },
+        "label": null,
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "transparent",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": null
+        }
+      },
+      {
+        "id": "r3",
+        "kind": "arrow",
+        "from": {
+          "elementId": "decision",
+          "side": "right"
+        },
+        "to": {
+          "elementId": "approved",
+          "side": "left"
+        },
+        "label": {
+          "text": "是",
+          "textElementId": "r3-label",
+          "binding": "bound",
+          "containerId": "r3",
+          "fontSize": 16
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "transparent",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": null
+        }
+      },
+      {
+        "id": "r4",
+        "kind": "arrow",
+        "from": {
+          "elementId": "decision",
+          "side": "right"
+        },
+        "to": {
+          "elementId": "rework",
+          "side": "left"
+        },
+        "label": {
+          "text": "否",
+          "textElementId": "r4-label",
+          "binding": "bound",
+          "containerId": "r4",
+          "fontSize": 16
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "transparent",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": null
+        }
+      },
+      {
+        "id": "r5",
+        "kind": "arrow",
+        "from": {
+          "elementId": "rework",
+          "side": "right"
+        },
+        "to": {
+          "elementId": "notify",
+          "side": "left"
+        },
+        "label": {
+          "text": "提醒",
+          "textElementId": "r5-label",
+          "binding": "bound",
+          "containerId": "r5",
+          "fontSize": 16
+        },
+        "style": {
+          "strokeColor": "#1e1e1e",
+          "backgroundColor": "transparent",
+          "fillStyle": "solid",
+          "strokeWidth": 1,
+          "strokeStyle": "solid",
+          "roughness": 0,
+          "opacity": 100,
+          "roundness": null
+        }
+      }
+    ]
+  }
+}

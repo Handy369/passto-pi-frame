@@ -1,0 +1,221 @@
+{
+  "version": "passto-desk-domain-json/v2",
+  "generatedAt": "2026-05-19T13:45:34.059Z",
+  "source": {
+    "inputPath": "/Users/handy/dev/passto-ai/extensions/passto-desk/examples/domain-v2-minimal.excalidraw",
+    "outputPath": "/Users/handy/dev/passto-ai/extensions/passto-desk/examples/domain-v2-roundtrip.domain.json",
+    "sourceType": "excalidraw-scene"
+  },
+  "scene": {
+    "totalElementCount": 5,
+    "activeElementCount": 5,
+    "bounds": {
+      "minX": 120,
+      "minY": 120,
+      "maxX": 600,
+      "maxY": 220,
+      "width": 480,
+      "height": 100
+    },
+    "typeCounts": {
+      "rectangle": 2,
+      "text": 2,
+      "arrow": 1
+    },
+    "appState": {
+      "theme": "light",
+      "viewBackgroundColor": "#ffffff",
+      "name": null
+    }
+  },
+  "nodes": [
+    {
+      "id": "node-a",
+      "kind": "rectangle",
+      "geometry": {
+        "x": 120,
+        "y": 120,
+        "width": 180,
+        "height": 100,
+        "centerX": 210,
+        "centerY": 170,
+        "angle": 0
+      },
+      "anchors": {
+        "top": {
+          "x": 210,
+          "y": 120
+        },
+        "right": {
+          "x": 300,
+          "y": 170
+        },
+        "bottom": {
+          "x": 210,
+          "y": 220
+        },
+        "left": {
+          "x": 120,
+          "y": 170
+        }
+      },
+      "label": {
+        "text": "Node A",
+        "textElementId": "label-a",
+        "binding": "bound",
+        "containerId": "node-a"
+      },
+      "style": {
+        "strokeColor": "#1e1e1e",
+        "backgroundColor": "transparent",
+        "fillStyle": "solid",
+        "strokeWidth": 1,
+        "strokeStyle": "solid",
+        "roughness": 0,
+        "opacity": 100,
+        "roundness": {
+          "type": 3
+        }
+      },
+      "raw": {
+        "boundElements": [
+          {
+            "id": "label-a",
+            "type": "text"
+          },
+          {
+            "id": "edge-a-b",
+            "type": "arrow"
+          }
+        ]
+      }
+    },
+    {
+      "id": "node-b",
+      "kind": "rectangle",
+      "geometry": {
+        "x": 420,
+        "y": 120,
+        "width": 180,
+        "height": 100,
+        "centerX": 510,
+        "centerY": 170,
+        "angle": 0
+      },
+      "anchors": {
+        "top": {
+          "x": 510,
+          "y": 120
+        },
+        "right": {
+          "x": 600,
+          "y": 170
+        },
+        "bottom": {
+          "x": 510,
+          "y": 220
+        },
+        "left": {
+          "x": 420,
+          "y": 170
+        }
+      },
+      "label": {
+        "text": "Node B",
+        "textElementId": "label-b",
+        "binding": "bound",
+        "containerId": "node-b"
+      },
+      "style": {
+        "strokeColor": "#1e1e1e",
+        "backgroundColor": "transparent",
+        "fillStyle": "solid",
+        "strokeWidth": 1,
+        "strokeStyle": "solid",
+        "roughness": 0,
+        "opacity": 100,
+        "roundness": {
+          "type": 3
+        }
+      },
+      "raw": {
+        "boundElements": [
+          {
+            "id": "label-b",
+            "type": "text"
+          },
+          {
+            "id": "edge-a-b",
+            "type": "arrow"
+          }
+        ]
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge-a-b",
+      "kind": "arrow",
+      "from": {
+        "elementId": "node-a",
+        "side": "right",
+        "point": {
+          "x": 300,
+          "y": 170
+        },
+        "binding": {
+          "elementId": "node-a",
+          "focus": 0,
+          "gap": 1,
+          "fixedPoint": null
+        }
+      },
+      "to": {
+        "elementId": "node-b",
+        "side": "left",
+        "point": {
+          "x": 420,
+          "y": 170
+        },
+        "binding": {
+          "elementId": "node-b",
+          "focus": 0,
+          "gap": 1,
+          "fixedPoint": null
+        }
+      },
+      "geometry": {
+        "x": 300,
+        "y": 170,
+        "points": [
+          [
+            0,
+            0
+          ],
+          [
+            120,
+            0
+          ]
+        ]
+      },
+      "style": {
+        "strokeColor": "#1e1e1e",
+        "backgroundColor": "transparent",
+        "fillStyle": "solid",
+        "strokeWidth": 1,
+        "strokeStyle": "solid",
+        "roughness": 0,
+        "opacity": 100,
+        "roundness": null
+      },
+      "raw": {
+        "boundElements": []
+      }
+    }
+  ],
+  "freeTexts": [],
+  "warnings": [],
+  "raw": {
+    "unmodeledElementIds": []
+  }
+}

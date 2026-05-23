@@ -1,0 +1,113 @@
+{
+  "version": "passto-desk-domain-json/v3",
+  "generatedAt": "2026-05-20T00:00:00.000Z",
+  "source": {
+    "inputPath": "example",
+    "outputPath": "example",
+    "sourceType": "manual"
+  },
+  "semantic": {
+    "objects": [
+      { "id": "user-draft", "type": "state", "title": "用户提交初稿", "role": "entry" },
+      { "id": "review", "type": "action", "title": "编辑审阅" },
+      { "id": "decision", "type": "decision", "title": "是否通过" },
+      { "id": "approved", "type": "state", "title": "通过发布" },
+      { "id": "rework", "type": "action", "title": "返回修改" },
+      { "id": "notify", "type": "action", "title": "通知作者" },
+      { "id": "note-policy", "type": "note", "title": "说明：若被退回，作者需在 24h 内完成修改后重新提交。" },
+      { "id": "annot-r4", "type": "annotation", "title": "仅高优先级稿件可走加急修改路径。", "target": { "targetType": "relation", "targetId": "r4" } },
+      { "id": "legend-box", "type": "legend", "title": "图例\n绿色=状态\n蓝色=动作\n黄色=决策\n浅黄虚线=注释" }
+    ],
+    "relations": [
+      { "id": "r1", "type": "transition", "from": "user-draft", "to": "review", "label": "提交" },
+      { "id": "r2", "type": "transition", "from": "review", "to": "decision" },
+      { "id": "r3", "type": "branch", "from": "decision", "to": "approved", "label": "是", "visual": { "elbowed": true } },
+      { "id": "r4", "type": "branch", "from": "decision", "to": "rework", "label": "否", "visual": { "elbowed": true } },
+      { "id": "r5", "type": "transition", "from": "rework", "to": "notify", "label": "提醒" }
+    ],
+    "notes": [
+      { "id": "note-policy", "type": "note" },
+      { "id": "annot-r4", "type": "annotation" },
+      { "id": "legend-box", "type": "legend" }
+    ]
+  },
+  "view": {
+    "id": "review-workflow",
+    "kind": "flowchart",
+    "direction": "LR",
+    "lanes": [
+      { "id": "author", "title": "作者" },
+      { "id": "editor", "title": "编辑" }
+    ],
+    "groups": [
+      {
+        "id": "review-loop",
+        "title": "审阅回路",
+        "memberObjectIds": ["review", "decision", "rework", "notify"]
+      }
+    ],
+    "members": [
+      { "objectId": "user-draft", "laneId": "author", "priority": 1 },
+      { "objectId": "review", "laneId": "editor", "priority": 1 },
+      { "objectId": "decision", "laneId": "editor", "priority": 2 },
+      { "objectId": "approved", "laneId": "editor", "priority": 3 },
+      { "objectId": "rework", "laneId": "editor", "priority": 4 },
+      { "objectId": "notify", "laneId": "author", "priority": 2 },
+      { "objectId": "note-policy", "laneId": "author", "priority": 3 },
+      { "objectId": "annot-r4", "laneId": "editor", "priority": 5 },
+      { "objectId": "legend-box", "priority": 0 }
+    ],
+    "visibleRelations": ["r1", "r2", "r3", "r4", "r5"]
+  },
+  "mapping": {
+    "objectToNode": [
+      { "objectId": "user-draft", "nodeKind": "ellipse", "labelMode": "bound-text" },
+      { "objectId": "review", "nodeKind": "rectangle", "labelMode": "bound-text" },
+      { "objectId": "decision", "nodeKind": "diamond", "labelMode": "bound-text" },
+      { "objectId": "approved", "nodeKind": "ellipse", "labelMode": "bound-text" },
+      { "objectId": "rework", "nodeKind": "rectangle", "labelMode": "bound-text" },
+      { "objectId": "notify", "nodeKind": "rectangle", "labelMode": "bound-text" },
+      { "objectId": "note-policy", "nodeKind": "rectangle", "labelMode": "bound-text" },
+      { "objectId": "annot-r4", "nodeKind": "rectangle", "labelMode": "bound-text" },
+      { "objectId": "legend-box", "nodeKind": "rectangle", "labelMode": "bound-text" }
+    ],
+    "relationToEdge": [
+      { "relationId": "r1", "edgeKind": "arrow", "labelMode": "edge-label" },
+      { "relationId": "r2", "edgeKind": "arrow", "labelMode": "none" },
+      { "relationId": "r3", "edgeKind": "arrow", "labelMode": "edge-label" },
+      { "relationId": "r4", "edgeKind": "arrow", "labelMode": "edge-label" },
+      { "relationId": "r5", "edgeKind": "arrow", "labelMode": "edge-label" }
+    ]
+  },
+  "visual": {
+    "theme": "light",
+    "palette": {
+      "action": "#e8f0fe",
+      "decision": "#fff4cc",
+      "state": "#eaf7ea",
+      "note": "#fff8db",
+      "legend": "#f8fafc"
+    },
+    "typography": {
+      "nodeFontSize": 20,
+      "edgeFontSize": 16
+    },
+    "layoutPolicy": {
+      "direction": "LR",
+      "primarySpacingX": 240,
+      "primarySpacingY": 130,
+      "laneGap": 180,
+      "preferOrthogonal": true,
+      "noteOffsetX": 220,
+      "noteOffsetY": 110
+    }
+  },
+  "scene": {
+    "appState": {
+      "theme": "light",
+      "viewBackgroundColor": "#ffffff",
+      "name": "Review Workflow"
+    }
+  },
+  "warnings": []
+}

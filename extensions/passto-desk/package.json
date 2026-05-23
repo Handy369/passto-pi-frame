@@ -1,0 +1,20 @@
+{
+  "name": "passto-desk",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "to-domain-json": "node ./scripts/excalidraw-to-domain-json.mjs",
+    "from-domain-json": "node ./scripts/domain-json-to-excalidraw.mjs",
+    "runtime:init": "node ./scripts/runtime-state-skeleton.mjs init",
+    "runtime:validate": "node ./scripts/runtime-state-skeleton.mjs validate",
+    "runtime:smoke": "npm run runtime:smoke:merge && npm run runtime:smoke:commit && npm run runtime:smoke:reverse && npm run runtime:smoke:forward",
+    "runtime:smoke:merge": "node ./scripts/runtime-merge-smoke.mjs",
+    "runtime:smoke:commit": "node ./scripts/runtime-commit-smoke.mjs",
+    "runtime:smoke:reverse": "node ./scripts/excalidraw-to-domain-json.mjs ./examples/domain-v3-minimal.excalidraw /tmp/passto-runtime-reverse.domain.json",
+    "runtime:smoke:forward": "node ./scripts/domain-json-to-excalidraw.mjs ./examples/domain-v3-minimal.json /tmp/passto-runtime-forward.excalidraw"
+  },
+  "pi": {
+    "extensions": ["./index.ts"],
+    "skills": ["./skills/passto-desk/SKILL.md"]
+  }
+}

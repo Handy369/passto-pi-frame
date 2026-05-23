@@ -1,0 +1,129 @@
+{
+  "version": "passto-desk-domain-json/v3",
+  "generatedAt": "2026-05-20T00:00:00.000Z",
+  "source": {
+    "inputPath": "example",
+    "outputPath": "example",
+    "sourceType": "manual"
+  },
+  "semantic": {
+    "objects": [
+      {
+        "id": "draft",
+        "type": "state",
+        "title": "初稿完成",
+        "role": "entry"
+      },
+      {
+        "id": "review",
+        "type": "action",
+        "title": "人工审阅"
+      },
+      {
+        "id": "pass-check",
+        "type": "decision",
+        "title": "是否通过"
+      },
+      {
+        "id": "approved",
+        "type": "state",
+        "title": "通过"
+      },
+      {
+        "id": "rework",
+        "type": "action",
+        "title": "返回修改"
+      }
+    ],
+    "relations": [
+      {
+        "id": "rel-draft-review",
+        "type": "transition",
+        "from": "draft",
+        "to": "review",
+        "label": "提交"
+      },
+      {
+        "id": "rel-review-pass",
+        "type": "transition",
+        "from": "review",
+        "to": "pass-check"
+      },
+      {
+        "id": "rel-pass-yes",
+        "type": "branch",
+        "from": "pass-check",
+        "to": "approved",
+        "label": "是"
+      },
+      {
+        "id": "rel-pass-no",
+        "type": "branch",
+        "from": "pass-check",
+        "to": "rework",
+        "label": "否"
+      }
+    ]
+  },
+  "view": {
+    "id": "main-flow",
+    "kind": "flowchart",
+    "direction": "LR",
+    "lanes": [],
+    "members": [
+      { "objectId": "draft", "priority": 1 },
+      { "objectId": "review", "priority": 2 },
+      { "objectId": "pass-check", "priority": 3 },
+      { "objectId": "approved", "priority": 4 },
+      { "objectId": "rework", "priority": 5 }
+    ],
+    "visibleRelations": [
+      "rel-draft-review",
+      "rel-review-pass",
+      "rel-pass-yes",
+      "rel-pass-no"
+    ]
+  },
+  "mapping": {
+    "objectToNode": [
+      { "objectId": "draft", "nodeKind": "ellipse", "labelMode": "bound-text" },
+      { "objectId": "review", "nodeKind": "rectangle", "labelMode": "bound-text" },
+      { "objectId": "pass-check", "nodeKind": "diamond", "labelMode": "bound-text" },
+      { "objectId": "approved", "nodeKind": "ellipse", "labelMode": "bound-text" },
+      { "objectId": "rework", "nodeKind": "rectangle", "labelMode": "bound-text" }
+    ],
+    "relationToEdge": [
+      { "relationId": "rel-draft-review", "edgeKind": "arrow", "labelMode": "edge-label" },
+      { "relationId": "rel-review-pass", "edgeKind": "arrow", "labelMode": "none" },
+      { "relationId": "rel-pass-yes", "edgeKind": "arrow", "labelMode": "edge-label" },
+      { "relationId": "rel-pass-no", "edgeKind": "arrow", "labelMode": "edge-label" }
+    ]
+  },
+  "visual": {
+    "theme": "light",
+    "palette": {
+      "action": "#e8f0fe",
+      "decision": "#fff4cc",
+      "state": "#eaf7ea"
+    },
+    "typography": {
+      "nodeFontSize": 20,
+      "edgeFontSize": 16
+    },
+    "layoutPolicy": {
+      "direction": "LR",
+      "primarySpacingX": 240,
+      "primarySpacingY": 130,
+      "laneGap": 180,
+      "preferOrthogonal": false
+    }
+  },
+  "scene": {
+    "appState": {
+      "theme": "light",
+      "viewBackgroundColor": "#ffffff",
+      "name": null
+    }
+  },
+  "warnings": []
+}
