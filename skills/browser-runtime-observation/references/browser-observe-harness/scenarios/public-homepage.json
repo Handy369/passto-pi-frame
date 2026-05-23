@@ -1,0 +1,19 @@
+{
+  "id": "public-homepage",
+  "url": "https://example.com",
+  "budgets": {
+    "maxConsoleErrors": 1,
+    "maxFailedRequests": 1
+  },
+  "capture": {
+    "screenshot": true,
+    "console": true,
+    "network": true,
+    "lighthouse": true
+  },
+  "chrome": {
+    "headless": true,
+    "isolated": true,
+    "executablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  }
+}

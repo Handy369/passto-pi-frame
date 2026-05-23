@@ -1,0 +1,7 @@
+[task]
+name = "test/hello-world"
+description = "创建文件并写入指定内容"
+timeout = 120
+
+[environment]
+image = "autoagent-base"

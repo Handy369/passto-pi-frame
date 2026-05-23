@@ -21,3 +21,9 @@ extensions/passto-desk/files/_verify-*.domain.json
 # Excalidraw working files
 *.excalidraw
 *.domain.json
+
+# skills artifacts
+skills/**/.DS_Store
+skills/**/__pycache__/
+skills/**/artifacts/
+skills/**/*.pyc

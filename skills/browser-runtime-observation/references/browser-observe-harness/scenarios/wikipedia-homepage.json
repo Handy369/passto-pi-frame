@@ -1,0 +1,19 @@
+{
+  "id": "wikipedia-homepage",
+  "url": "https://www.wikipedia.org",
+  "budgets": {
+    "maxConsoleErrors": 0,
+    "maxFailedRequests": 2
+  },
+  "capture": {
+    "screenshot": true,
+    "console": true,
+    "network": true,
+    "lighthouse": false
+  },
+  "chrome": {
+    "headless": true,
+    "isolated": true,
+    "executablePath": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+  }
+}

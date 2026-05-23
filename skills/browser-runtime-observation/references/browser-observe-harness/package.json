@@ -1,0 +1,10 @@
+{
+  "name": "browser-runtime-observation-harness",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "smoke:real": "node ./references/browser-observe-harness/scripts/real-smoke.mjs --scenario ./references/browser-observe-harness/scenarios/public-homepage.json",
+    "smoke:real:all": "node ./references/browser-observe-harness/scripts/real-smoke.mjs --scenario ./references/browser-observe-harness/scenarios/public-homepage.json && node ./references/browser-observe-harness/scripts/real-smoke.mjs --scenario ./references/browser-observe-harness/scenarios/wikipedia-homepage.json",
+    "test:contract": "node ./references/browser-observe-harness/scripts/contract-check.mjs"
+  }
+}

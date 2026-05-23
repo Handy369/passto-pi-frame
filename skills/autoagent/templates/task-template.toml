@@ -1,0 +1,7 @@
+[task]
+name = "{{ORG}}/{{TASK_NAME}}"
+description = "{{DESCRIPTION}}"
+timeout = 120
+
+[environment]
+image = "autoagent-base"
