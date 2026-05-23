@@ -14,7 +14,7 @@ import {
   writeForkSessionToTempFile,
   writePromptToTempFile,
 } from "./cli.ts";
-import { loadAgentProfile, applyAgentProfileDefaults } from "./agents.ts";
+import { loadAgentProfile, applyAgentProfileDefaults, deriveRuntimeWarnings } from "./agents.ts";
 import { createEventState, finalizeEventState, processPiJsonLine } from "./events.ts";
 import {
   createGuardContext,
@@ -41,6 +41,12 @@ export async function runSubagent(
   const inherited = parseInheritedCliArgs(process.argv);
   const state = createEventState();
   const progress = createInitialProgress(runId);
+  const runtimeWarnings = deriveRuntimeWarnings({
+    requested: options,
+    resolved: resolvedOptions,
+    profile: agentProfile,
+    inherited,
+  });
 
   let promptTmpDir: string | null = null;
   let promptTmpPath: string | null = null;
@@ -258,8 +264,18 @@ export async function runSubagent(
         runtimeVersion: "passto-agent-runtime-v1",
         agentProfile: agentProfile?.name,
         agentProfilePath: agentProfile?.filePath,
-        modelName: resolvedOptions.model ?? agentProfile?.model,
-        thinking: typeof resolvedOptions.thinking === "string" ? resolvedOptions.thinking : agentProfile?.thinking,
+        providerName: resolvedOptions.provider ?? inherited.fallbackProvider ?? agentProfile?.provider,
+        modelName: resolvedOptions.model ?? inherited.fallbackModel ?? agentProfile?.model,
+        thinking: typeof resolvedOptions.thinking === "string"
+          ? resolvedOptions.thinking
+          : typeof inherited.fallbackThinking === "string"
+            ? inherited.fallbackThinking
+            : agentProfile?.thinking,
+        inheritParentExtensions: resolvedOptions.inheritParentExtensions === true,
+        inheritedExtensions:
+          resolvedOptions.inheritParentExtensions === true ? inherited.extensionArgs : [],
+        explicitExtensions: resolvedOptions.extensions ?? [],
+        warnings: runtimeWarnings,
       },
     };
   } finally {

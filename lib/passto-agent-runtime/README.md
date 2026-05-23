@@ -146,7 +146,8 @@
 - `sessionMode` (`spawn` / `fork`)
 - `forkSessionSnapshotJsonl`
 
-#### 模型相关
+#### Provider / 模型相关
+- `provider`
 - `model`
 - `thinking`
 
@@ -156,6 +157,7 @@
 - `skills`
 - `noTools`
 - `noExtensions`
+- `inheritParentExtensions`
 - `noSkills`
 - `noPromptTemplates`
 - `noContextFiles`
@@ -179,6 +181,19 @@
 
 说明：若调用方未显式传 `completionPolicy / idleTimeoutMs / terminateGraceMs`，runtime 会默认读取 `config.json` 中的 `subagent.defaults`。代码中仅保留极小技术 fallback，供配置缺失时兜底。
 
+### 当前运行时优先级
+
+对于 `provider / model / thinking / inheritParentExtensions / extensions`，当前优先级为：
+
+1. 调用方显式 child options
+2. agent profile frontmatter 默认值
+3. 父进程 CLI fallback
+4. runtime 技术默认值
+
+说明：
+- parent `--extension / --no-extensions` 不属于普通 fallback 值；只有在 child 显式设置 `inheritParentExtensions: true` 时才会进入 CLI builder。
+- `provider` fallback 与 extension inheritance 是分离判断的，因此 runtime 会针对高风险组合发出 warning，而不是默认假设 provider 一定可用。
+
 ---
 
 ## 当前已实现的 CLI builder 映射
@@ -198,7 +213,8 @@
 - 当前实现没有直接用 `--fork <path>`，而是用 temp session file + `--session <path>` 来运行。
 - 这是 runtime 的当前实现策略，不代表 Pi CLI 不支持 `--fork`。
 
-### 模型与 thinking
+### 模型与 provider / thinking
+- `provider` → `--provider`
 - `model` → `--model`
 - `thinking` → `--thinking`
 - 当前行为：原样透传 Pi 官方 thinking level（如 `off` / `minimal` / `low` / `medium` / `high` / `xhigh`）
@@ -233,15 +249,14 @@
 - `--extension`, `-e`
 - `--no-extensions`, `-ne`
 
-默认会继承这些父进程 extension 参数。
-如果子任务需要一个精确且隔离的 extension surface，可设置 `inheritParentExtensions: false`，这样 child 只使用自身显式配置的 extensions / `noExtensions` 策略。
+默认行为不是自动继承。当前 runtime 只有在子任务显式设置 `inheritParentExtensions: true` 时，才会把这些父进程 extension 参数继续传给 child。
+如果子任务需要一个精确且隔离的 extension surface，可保持 `inheritParentExtensions: false`，这样 child 只使用自身显式配置的 `extensions` / `noExtensions` 策略。
 
 #### alwaysProxy
 - `--skill`
 - `--prompt-template`
 - `--theme`
 - `--session-dir`
-- `--provider`
 - `--api-key`
 - `--system-prompt`
 - `--models`
@@ -251,21 +266,26 @@
 - `--verbose`
 
 #### fallback only（仅当子任务 options 未显式指定时）
+- `--provider`
 - `--model`
 - `--thinking`
 - `--tools`
 - `--no-tools`
 
 说明：
-- shared runtime 当前采用“显式 options 优先，父 CLI fallback 次之”的策略。
-- 调用方若传了 `options.model` / `options.tools`，则优先使用子任务参数。
+- shared runtime 当前采用“显式 child options 优先，agent profile defaults 次之，父 CLI fallback 再次之”的策略。
+- `--provider` 当前不再作为 alwaysProxy 直接透传，而是作为 fallback provider 使用，以避免 child CLI 中重复注入 `--provider`。
+- parent extension surface 与 provider fallback 是两件独立的事：即使 child 继承到了 provider 名称，也不代表它已经继承了 provider 所依赖的 extension 注册面。
+- 当前 warning 机制已支持：
+  - `provider_without_extension_inheritance`
+  - `provider_with_no_child_extensions`
+  - `profile_model_overrides_parent_model`
 
 ---
 
 ## 当前未直接建模但可通过 `extraArgs` 透传的官方参数
 
 以下官方参数，当前 `PiChildRunOptions` 未为其提供专门字段，但调用方可临时通过 `extraArgs` 使用：
-- `--provider`
 - `--models`
 - `--theme`
 - `--verbose`

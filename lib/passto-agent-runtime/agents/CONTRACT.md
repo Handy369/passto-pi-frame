@@ -23,6 +23,7 @@
 ---
 name: reviewer
 description: Isolated review agent
+provider: PASSTOAI-TW
 model: PASSTOAI-TW/HubTo-TW/qwen3.6-plus
 thinking: low
 tools: read,bash,grep,find,ls
@@ -57,6 +58,14 @@ maxDepth: 1
 #### `description`
 - 类型:`string`
 - 作用:agent 简介
+
+#### `provider`
+- 类型:`string`
+- 作用:默认 provider
+- 示例:
+  - `provider: PASSTOAI-TW`
+  - `provider: openai`
+- 说明：该字段只定义 child 默认 provider，不等价于自动继承 provider 所依赖的 parent extension surface。
 
 #### `model`
 - 类型:`string`
@@ -150,7 +159,15 @@ frontmatter 之后的正文会被视为:
 来自:
 - `agents/*.md`
 
-### 3. runtime 内建默认值
+### 3. 父进程 CLI fallback
+当前可能包括:
+- `--provider`
+- `--model`
+- `--thinking`
+- `--tools`
+- `--no-tools`
+
+### 4. runtime 内建默认值
 来自:
 - `guards.ts`
 - `cli.ts`
@@ -167,6 +184,7 @@ agent profile:
 ```md
 ---
 name: reviewer
+provider: PASSTOAI-TW
 model: PASSTOAI-TW/HubTo-TW/qwen3.6-plus
 ---
 ```
@@ -214,6 +232,65 @@ runSubagent({
 
 ---
 
+### 示例 3:仅继承 provider 名称不代表继承 provider extension surface
+
+父进程 CLI:
+
+```bash
+pi --provider PASSTOAI-TW --extension /abs/path/provider-extension.ts
+```
+
+调用:
+
+```ts
+runSubagent({
+  agent: "reviewer",
+  prompt,
+  cwd,
+})
+```
+
+结果:
+- child 可能通过父 CLI fallback 拿到 `provider=PASSTOAI-TW`
+- 但若未显式设置 `inheritParentExtensions: true`，child 不会自动继承 parent `--extension`
+- 因此 provider 仍可能无法解析
+- runtime 应允许执行，但可发出 warning，例如：
+  - `provider_without_extension_inheritance`
+  - `provider_with_no_child_extensions`
+
+### 示例 4:profile model 覆盖 inherited parent model
+
+父进程 CLI:
+
+```bash
+pi --model openai/gpt-4o
+```
+
+agent profile:
+
+```md
+---
+name: reviewer
+model: PASSTOAI-TW/HubTo-TW/qwen3.6-plus
+---
+```
+
+调用:
+
+```ts
+runSubagent({
+  agent: "reviewer",
+  prompt,
+  cwd,
+})
+```
+
+结果:
+- child 未显式传 `model`
+- profile model 优先于 inherited parent model
+- runtime 可发出 warning：
+  - `profile_model_overrides_parent_model`
+
 ## System Prompt 合并规则
 
 `systemPrompt` 的优先级不是覆盖,而是合并。
@@ -259,9 +336,8 @@ runSubagent({
 - `safetyLevel`
 - `delegationStrategy`
 - `artifactPolicy`
-- `provider`
 
-未来若需要支持,必须先更新本文件,再更新 runtime 解析逻辑。
+`provider` 当前已经属于受支持 contract，可写在 frontmatter 中。
 
 ---
 
@@ -280,13 +356,18 @@ runSubagent({
 当前 `passto-agent-runtime` 已实际解析并消费以下 frontmatter:
 - `name`
 - `description`
+- `provider`
 - `model`
 - `thinking`
 - `tools`
 - `skills`
 - `extensions`
+- `inheritParentExtensions`
 - `sessionMode`
 - `timeoutMs`
+- `completionPolicy`
+- `idleTimeoutMs`
+- `terminateGraceMs`
 - `maxDepth`
 - 正文 `systemPrompt`
 

@@ -12,11 +12,13 @@ export const PI_OFFLINE_ENV = "PI_OFFLINE";
 export type InheritedCliArgs = {
   extensionArgs: string[];
   alwaysProxy: string[];
+  fallbackProvider?: string;
   fallbackModel?: string;
   fallbackThinking?: string;
   fallbackTools?: string;
   fallbackNoTools: boolean;
 };
+
 
 function looksLikeExplicitRelativePath(value: string): boolean {
   return (
@@ -52,6 +54,7 @@ function resolvePathArg(
 export function parseInheritedCliArgs(argv: string[]): InheritedCliArgs {
   const extensionArgs: string[] = [];
   const alwaysProxy: string[] = [];
+  let fallbackProvider: string | undefined;
   let fallbackModel: string | undefined;
   let fallbackThinking: string | undefined;
   let fallbackTools: string | undefined;
@@ -121,9 +124,12 @@ export function parseInheritedCliArgs(argv: string[]): InheritedCliArgs {
       continue;
     }
 
-    if (["--provider", "--api-key", "--system-prompt", "--models"].includes(flagName)) {
+  if (["--provider", "--api-key", "--system-prompt", "--models"].includes(flagName)) {
       const [value, skip] = getValue();
-      if (value !== undefined) alwaysProxy.push(flagName, value);
+      if (value !== undefined) {
+        if (flagName !== "--provider") alwaysProxy.push(flagName, value);
+        if (flagName === "--provider") fallbackProvider = value;
+      }
       i += skip;
       continue;
     }
@@ -162,13 +168,13 @@ export function parseInheritedCliArgs(argv: string[]): InheritedCliArgs {
     }
 
     if (inlineValue !== undefined) {
-      alwaysProxy.push(flagName, inlineValue);
+      if (flagName !== "--provider") alwaysProxy.push(flagName, inlineValue);
       i += 1;
       continue;
     }
 
     if (nextIsValue) {
-      alwaysProxy.push(flagName, nextToken);
+      if (flagName !== "--provider") alwaysProxy.push(flagName, nextToken);
       i += 2;
       continue;
     }
@@ -180,6 +186,7 @@ export function parseInheritedCliArgs(argv: string[]): InheritedCliArgs {
   return {
     extensionArgs,
     alwaysProxy,
+    fallbackProvider,
     fallbackModel,
     fallbackThinking,
     fallbackTools,
@@ -257,6 +264,7 @@ export function buildPiArgs(input: BuildPiArgsInput): string[] {
   const inheritedCli = inherited ?? parseInheritedCliArgs(process.argv);
 
   const inheritedExtensionArgs = options.inheritParentExtensions === true ? inheritedCli.extensionArgs : [];
+  const effectiveProvider = options.provider ?? inheritedCli.fallbackProvider;
 
   const args: string[] = [
     "--mode",
@@ -275,6 +283,8 @@ export function buildPiArgs(input: BuildPiArgsInput): string[] {
     }
     args.push("--session", forkSessionPath);
   }
+
+  if (effectiveProvider) args.push("--provider", effectiveProvider);
 
   const model = options.model ?? inheritedCli.fallbackModel;
   if (model) args.push("--model", model);

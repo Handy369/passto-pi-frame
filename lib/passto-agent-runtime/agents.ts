@@ -1,6 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentProfile, PiChildRunOptions } from "./types.ts";
+import type {
+  AgentProfile,
+  PiChildRunOptions,
+  SubagentRuntimeWarning,
+} from "./types.ts";
 
 const AGENTS_DIR = "/Users/handy/.pi/agent/lib/passto-agent-runtime/agents";
 
@@ -45,6 +49,7 @@ export function parseAgentProfileMarkdown(filePath: string): AgentProfile {
   return {
     name: meta.name || path.basename(filePath, ".md"),
     description: meta.description,
+    provider: meta.provider,
     model: meta.model,
     thinking: meta.thinking,
     tools: normalizeStringArray(meta.tools),
@@ -75,6 +80,7 @@ export function applyAgentProfileDefaults(options: PiChildRunOptions, profile: A
 
   return {
     ...options,
+    provider: options.provider ?? profile.provider,
     model: options.model ?? profile.model,
     thinking: options.thinking ?? profile.thinking,
     tools: options.tools ?? profile.tools,
@@ -89,4 +95,53 @@ export function applyAgentProfileDefaults(options: PiChildRunOptions, profile: A
     maxDepth: options.maxDepth ?? profile.maxDepth,
     appendSystemPrompt: systemPrompt || undefined,
   };
+}
+
+export function deriveRuntimeWarnings(input: {
+  requested: PiChildRunOptions;
+  resolved: PiChildRunOptions;
+  profile?: AgentProfile;
+  inherited: { fallbackProvider?: string; fallbackModel?: string; extensionArgs: string[] };
+}): SubagentRuntimeWarning[] {
+  const { requested, resolved, profile, inherited } = input;
+  const warnings: SubagentRuntimeWarning[] = [];
+
+  const effectiveProvider = resolved.provider ?? inherited.fallbackProvider ?? profile?.provider;
+  const hasInheritedExtensions = inherited.extensionArgs.length > 0;
+  const hasExplicitExtensions = (resolved.extensions?.length ?? 0) > 0;
+  const inheritParentExtensions = resolved.inheritParentExtensions === true;
+
+  if (effectiveProvider && hasInheritedExtensions && !inheritParentExtensions && !hasExplicitExtensions) {
+    warnings.push({
+      code: "provider_without_extension_inheritance",
+      message:
+        `Child will use provider "${effectiveProvider}" but parent extensions are not inherited and no child extensions were provided. ` +
+        `If this provider is registered by a parent --extension, the child may fail to resolve it.`,
+    });
+  }
+
+  if (effectiveProvider && !inheritParentExtensions && !hasExplicitExtensions) {
+    warnings.push({
+      code: "provider_with_no_child_extensions",
+      message:
+        `Child provider is "${effectiveProvider}" with no inherited or explicit extensions. ` +
+        `This is safe only if the provider is built-in or otherwise available without extension registration.`,
+    });
+  }
+
+  if (
+    profile?.model &&
+    inherited.fallbackModel &&
+    requested.model === undefined &&
+    resolved.model === profile.model &&
+    profile.model !== inherited.fallbackModel
+  ) {
+    warnings.push({
+      code: "profile_model_overrides_parent_model",
+      message:
+        `Agent profile model "${profile.model}" overrides inherited parent model "${inherited.fallbackModel}" because no explicit child model was provided.`,
+    });
+  }
+
+  return warnings;
 }

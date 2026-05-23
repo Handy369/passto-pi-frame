@@ -65,8 +65,9 @@ export type PiChildRunOptions = {
   agent?: string;
   sessionMode?: SessionMode;
   forkSessionSnapshotJsonl?: string;
+  provider?: string;
   model?: string;
-  thinking?: "off" | "low" | "medium" | "high" | string;
+  thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | string;
   tools?: string[];
   extensions?: string[];
   skills?: string[];
@@ -91,9 +92,20 @@ export type PiChildRunOptions = {
   env?: Record<string, string>;
 };
 
+export type SubagentRuntimeWarningCode =
+  | "provider_without_extension_inheritance"
+  | "provider_with_no_child_extensions"
+  | "profile_model_overrides_parent_model";
+
+export type SubagentRuntimeWarning = {
+  code: SubagentRuntimeWarningCode;
+  message: string;
+};
+
 export type AgentProfile = {
   name: string;
   description?: string;
+  provider?: string;
   model?: string;
   thinking?: string;
   tools?: string[];
@@ -132,8 +144,13 @@ export type SubagentRunResult = {
     runtimeVersion: string;
     agentProfile?: string;
     agentProfilePath?: string;
+    providerName?: string;
     modelName?: string;
     thinking?: string;
+    inheritParentExtensions?: boolean;
+    inheritedExtensions?: string[];
+    explicitExtensions?: string[];
+    warnings?: SubagentRuntimeWarning[];
   };
 };
 

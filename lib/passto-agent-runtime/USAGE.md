@@ -62,6 +62,7 @@ const result = await runSubagent(options, callbacks, signal);
   sessionMode?: "spawn" | "fork";
   forkSessionSnapshotJsonl?: string;
 
+  provider?: string;
   model?: string;
   thinking?: string;
 
@@ -71,6 +72,7 @@ const result = await runSubagent(options, callbacks, signal);
 
   noTools?: boolean;
   noExtensions?: boolean;
+  inheritParentExtensions?: boolean;
   noSkills?: boolean;
   noPromptTemplates?: boolean;
   noContextFiles?: boolean;
@@ -148,8 +150,8 @@ const result = await runSubagent({
 
 含义：
 - `agent: "reviewer"` 会加载 `agents/reviewer.md`
-- frontmatter 中的 `model / thinking / tools / sessionMode / timeoutMs / completionPolicy / idleTimeoutMs / terminateGraceMs / maxDepth / inheritParentExtensions` 会作为默认值
-- 若调用方显式再传 `model / tools / timeoutMs` 等，则调用方参数优先
+- frontmatter 中的 `provider / model / thinking / tools / sessionMode / timeoutMs / completionPolicy / idleTimeoutMs / terminateGraceMs / maxDepth / inheritParentExtensions` 会作为默认值
+- 若调用方显式再传 `provider / model / tools / timeoutMs` 等，则调用方参数优先
 - agent 正文会作为基础 `systemPrompt`
 - `appendSystemPrompt` 会追加在 agent 正文后面，而不是覆盖它
 
@@ -161,7 +163,25 @@ const result = await runSubagent({
 
 说明：当 child 需要精确控制自己的 extension surface 时，可设置 `inheritParentExtensions: false`，避免父进程 `--extension` 参数被继续透传到 child。
 
+说明：若 child 依赖由父进程 extension 注册的 provider，仅继承 provider 名称并不够；还需要显式设置 `inheritParentExtensions: true`，或给 child 传入所需 `extensions`。
+
 说明：若未显式传 `completionPolicy / idleTimeoutMs / terminateGraceMs`，runtime 会先读取 `agent/lib/passto-agent-runtime/config.json` 的 `subagent.defaults`，只有在配置缺失时才使用极小技术 fallback。
+
+### 运行时优先级与 warning
+
+对于 `provider / model / thinking / inheritParentExtensions / extensions`，当前优先级为：
+
+1. 调用方显式 child options
+2. agent profile frontmatter 默认值
+3. 父进程 CLI fallback
+4. runtime 技术默认值
+
+当前 runtime 会针对以下高风险但仍允许执行的组合发出 warning：
+- `provider_without_extension_inheritance`
+- `provider_with_no_child_extensions`
+- `profile_model_overrides_parent_model`
+
+这些 warning 会进入 `result.provenance.warnings`，供宿主 extension 或 TUI 渲染层显示。
 
 ### `completionPolicy` 说明
 
