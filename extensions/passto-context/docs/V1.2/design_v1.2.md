@@ -429,7 +429,7 @@ Reflector 轻状态恢复口径：
 
 | 命令 | 覆盖范围 |
 |------|----------|
-| `npm run test:grc` | 快速 Node 回归链 |
+| `npm run test:grc` | 快速 Node 回归链（含 `test:draft-goal`：`draftGoalOp` 单测 + fresh real session proof） |
 | `npm run test:tmux` | 真实 Pi / tmux 集成回归聚合链（`test:tui + test:midrun + test:reflector-replay`） |
 | `npm run test:regression` | 主回归链，串联 `test:grc + test:tmux` |
 
@@ -443,6 +443,7 @@ Reflector 轻状态恢复口径：
 - compaction handler 的 curator-only 接管
 - round-based state 字段更新与 restore
 - `/ptc status` 的收敛口径
+- `draftGoalOp` 的解析、首轮空 `lastGoalState` bootstrap、runtime overlay 与 fresh real session proof
 
 ### 12.3 test:tmux 额外覆盖
 
